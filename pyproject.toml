@@ -19,5 +19,6 @@ dependencies = [
     "pypdf2>=3.0.1",
     "python-dotenv>=1.2.1",
     "sentence-transformers>=5.1.2",
+    "supabase>=2.22.3",
     "tiktoken>=0.7.0",
 ]

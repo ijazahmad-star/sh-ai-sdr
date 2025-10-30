@@ -108,6 +108,8 @@ def create_or_load_vectorstore(docs=None):
             vectorstore.add_documents(docs)
         except Exception as e:
             print("Failed to upload some documents:", e)
+        finally:
+            client.close()
     else:
         print("Did not received any doc!!!")
 

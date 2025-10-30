@@ -13,4 +13,4 @@ wheels/
 
 # dataset
 data/
-config.py
+frontend/
