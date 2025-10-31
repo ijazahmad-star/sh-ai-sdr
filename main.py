@@ -1,7 +1,12 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.documents import Document
-from pydantic import BaseModel
+# from pydantic import BaseModel
+from app.schema import (
+    QueryRequest,
+    PromptRequest,
+    EditPromptRequest,
+)
 from pathlib import Path
 import json, shutil
 import uvicorn
@@ -36,17 +41,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class QueryRequest(BaseModel):
-    query: str
+# class QueryRequest(BaseModel):
+#     query: str
 
-class PromptRequest(BaseModel):
-    name: str
-    prompt: str
+# class PromptRequest(BaseModel):
+#     name: str
+#     prompt: str
 
-class EditPromptRequest(BaseModel):
-    old_name: str
-    new_name: str = None
-    new_prompt: str = None
+# class EditPromptRequest(BaseModel):
+#     old_name: str
+#     new_name: str = None
+#     new_prompt: str = None
 
 
 @app.post("/query")

@@ -30,7 +30,7 @@ def create_or_load_vectorstore(docs=None):
     if docs:
         docs = clean_metadata(docs)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500, chunk_overlap=100
+            chunk_size=500, chunk_overlap=50
             )
         docs = text_splitter.split_documents(docs)
         vectorstore = SupabaseVectorStore.from_documents(
