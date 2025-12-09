@@ -152,8 +152,6 @@ def create_or_load_vectorstore(docs=None, user_id: str = None):
 
         # Insert into Supabase
         res = supabase.table(table_name).insert(rows_to_insert).execute()
-        if res.error:
-            raise Exception(f"Failed to insert documents: {res.error}")
 
         print(f"Inserted {len(chunks)} documents into Supabase for user_id={user_id}")
 

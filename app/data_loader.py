@@ -39,3 +39,11 @@ def load_from_websites(urls):
         loader = WebBaseLoader(url)
         docs.extend(loader.load())
     return docs
+
+def clean_text(text: str) -> str:
+    return text.replace("\x00", "")
+
+def clean_metadata(meta):
+    if isinstance(meta, dict):
+        return {k: clean_text(v) if isinstance(v, str) else v for k, v in meta.items()}
+    return meta

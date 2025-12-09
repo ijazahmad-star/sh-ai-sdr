@@ -17,7 +17,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from app.config import PDF_DIR
-from app.data_loader import read_uploaded_file
+from app.data_loader import read_uploaded_file, clean_text, clean_metadata
 from app.tools import create_retriever_tool, check_user_has_documents
 from app.graph_builder import build_workflow
 import os
@@ -131,11 +131,14 @@ async def upload_user_document(
         
         # Extract text content
         content = read_uploaded_file(temp_path)
+        content = clean_text(content)
+        metadata = clean_metadata({"source": file.filename, "user_id": user_id})
         
         # Create document with metadata
         doc = Document(
             page_content=content,
-            metadata={"source": file.filename}
+            # metadata={"source": file.filename}
+            metadata=metadata
         )
         
         # Store in vectorstore with user_id
