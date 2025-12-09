@@ -43,28 +43,136 @@ def clean_metadata(docs):
         cleaned_docs.append(doc)
     return cleaned_docs
 
-def create_or_load_vectorstore(docs=None):
+# def create_or_load_vectorstore(docs=None):
+#     table_name = "documents"
+#     if docs:
+#         # docs = clean_metadata(docs)
+#         text_splitter = RecursiveCharacterTextSplitter(
+#             chunk_size=500, chunk_overlap=50
+#             )
+#         docs = text_splitter.split_documents(docs)
+#         vectorstore = SupabaseVectorStore.from_documents(
+#             docs,
+#             embeddings,
+#             client=supabase,
+#             table_name=table_name,
+#         )
+#         print(f"Inserted {len(docs)} documents into Supabase.")
+#     else:
+#         vectorstore = SupabaseVectorStore(
+#             embedding=embeddings,
+#             client=supabase,
+#             table_name=table_name,
+#         )
+#         print("Loaded existing Supabase vector store.")
+#     return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+
+# def create_or_load_vectorstore(docs=None, user_id: str = None):
+#     """
+#     Create or load vectorstore
+#     user_id = None means default KB (shared)
+#     user_id = str means user-specific KB
+#     """
+#     table_name = "documents"
+    
+#     if docs:
+#         text_splitter = RecursiveCharacterTextSplitter(
+#             chunk_size=500, 
+#             chunk_overlap=50
+#         )
+#         chunks = text_splitter.split_documents(docs)
+        
+#         # Add user_id to metadata of each chunk
+#         for chunk in chunks:
+#             if user_id:
+#                 chunk.metadata["user_id"] = user_id
+        
+#         vectorstore = SupabaseVectorStore.from_documents(
+#             chunks,
+#             embeddings,
+#             client=supabase,
+#             table_name=table_name,
+#         )
+        
+#         # Manually update user_id in database (langchain doesn't handle custom columns)
+#         if user_id:
+#             # Get recently inserted documents and update user_id
+#             response = supabase.table(table_name)\
+#                 .select("id")\
+#                 .is_("user_id", "null")\
+#                 .order("id", desc=True)\
+#                 .limit(len(chunks))\
+#                 .execute()
+            
+#             for doc in response.data:
+#                 supabase.table(table_name)\
+#                     .update({"user_id": user_id})\
+#                     .eq("id", doc["id"])\
+#                     .execute()
+        
+#         print(f"Inserted {len(chunks)} documents into Supabase for user_id={user_id}")
+#     else:
+#         vectorstore = SupabaseVectorStore(
+#             embedding=embeddings,
+#             client=supabase,
+#             table_name=table_name,
+#         )
+#         print("Loaded existing Supabase vector store.")
+    
+#     return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+def create_or_load_vectorstore(docs=None, user_id: str = None):
+    """
+    Create or load vectorstore
+    - user_id = None → default/shared KB
+    - user_id = str → user-specific KB
+    """
     table_name = "documents"
+
     if docs:
-        # docs = clean_metadata(docs)
+        # Split documents into chunks
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500, chunk_overlap=50
-            )
-        docs = text_splitter.split_documents(docs)
-        vectorstore = SupabaseVectorStore.from_documents(
-            docs,
-            embeddings,
+            chunk_size=500,
+            chunk_overlap=50
+        )
+        chunks = text_splitter.split_documents(docs)
+
+        # Add user_id to metadata of each chunk
+        for chunk in chunks:
+            chunk.metadata["user_id"] = user_id  # can be None for shared KB
+
+        # Prepare data for direct insertion
+        rows_to_insert = []
+        for chunk in chunks:
+            rows_to_insert.append({
+                "content": chunk.page_content,
+                "metadata": chunk.metadata,
+                "embedding": embeddings.embed_documents([chunk.page_content])[0],
+                "user_id": user_id
+            })
+
+        # Insert into Supabase
+        res = supabase.table(table_name).insert(rows_to_insert).execute()
+        if res.error:
+            raise Exception(f"Failed to insert documents: {res.error}")
+
+        print(f"Inserted {len(chunks)} documents into Supabase for user_id={user_id}")
+
+        # Create vectorstore from inserted documents
+        vectorstore = SupabaseVectorStore(
+            embedding=embeddings,
             client=supabase,
             table_name=table_name,
         )
-        print(f"Inserted {len(docs)} documents into Supabase.")
+
     else:
+        # Just load existing vectorstore
         vectorstore = SupabaseVectorStore(
             embedding=embeddings,
             client=supabase,
             table_name=table_name,
         )
         print("Loaded existing Supabase vector store.")
+
     return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
 def get_vectorstore(docs=None):
