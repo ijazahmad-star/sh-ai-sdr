@@ -88,45 +88,162 @@ def load_vectorstore():
     return vectorstore
 
 
-def add_prompt(name: str, prompt: str):
-    existing = supabase.table("prompts").select("id").eq("name", name).execute()
+# def add_prompt(name: str, prompt: str):
+#     existing = supabase.table("prompts").select("id").eq("name", name).execute()
+#     if existing.data:
+#         return {"error": f"Prompt '{name}' already exists."}
+#     res = supabase.table("prompts").insert({"name": name, "prompt": prompt}).execute()
+#     return {"message": f"Prompt '{name}' added successfully.", "data": res.data}
+# def get_prompts():
+#     res = supabase.table("prompts").select("id, name, prompt, is_active").execute()
+#     return {"prompts": res.data or []}
+# def edit_prompt(old_name: str, new_name: str = None, new_prompt: str = None):
+#     existing = supabase.table("prompts").select("id").eq("name", old_name).execute()
+#     if not existing.data:
+#         return {"error": f"Prompt '{old_name}' not found."}
+#     update_data = {}
+#     if new_name:
+#         update_data["name"] = new_name
+#     if new_prompt:
+#         update_data["prompt"] = new_prompt
+#     res = supabase.table("prompts").update(update_data).eq("name", old_name).execute()
+#     return {"message": f"Prompt '{old_name}' updated successfully.", "data": res.data}
+
+# def edit_prompt(old_name: str, new_prompt: str = None):
+#     existing = supabase.table("prompts").select("id").eq("name", old_name).execute()
+#     if not existing.data:
+#         return {"error": f"Prompt '{old_name}' not found."}
+#     update_data = {}
+#     if new_prompt:
+#         update_data["prompt"] = new_prompt
+#     res = supabase.table("prompts").update(update_data).eq("name", old_name).execute()
+#     return {"message": f"Prompt '{old_name}' updated successfully.", "data": res.data}
+# def delete_prompt(name: str):
+#     existing = supabase.table("prompts").select("id").eq("name", name).execute()
+#     if not existing.data:
+#         return {"error": f"Prompt '{name}' not found."}
+#     res = supabase.table("prompts").delete().eq("name", name).execute()
+#     return {"message": f"Prompt '{name}' deleted successfully."}
+# def set_active_prompt(name: str):
+#     supabase.table("prompts").update({"is_active": False}).neq("name", name).execute()
+#     target = supabase.table("prompts").update({"is_active": True}).eq("name", name).execute()
+#     if not target.data:
+#         return {"error": f"Prompt '{name}' not found."}
+#     return {"message": f"Prompt '{name}' set as active."}
+
+# def get_active_prompt():
+#     res = supabase.table("prompts").select("name, prompt").eq("is_active", True).limit(1).execute()
+#     if not res.data:
+#         return {"error": "No active prompt found."}
+#     return {"active_prompt": res.data[0]}
+
+
+def add_prompt(name: str, prompt: str, user_id: str):
+    existing = (
+        supabase.table("prompts")
+        .select("id")
+        .eq("name", name)
+        .eq("user_id", user_id)
+        .execute()
+        
+    )
+
     if existing.data:
-        return {"error": f"Prompt '{name}' already exists."}
-    res = supabase.table("prompts").insert({"name": name, "prompt": prompt}).execute()
+        return {"error": f"Prompt '{name}' already exists for this user."}
+
+    res = (
+        supabase.table("prompts")
+        .insert({"name": name, "prompt": prompt, "user_id": user_id})
+        .execute()
+    )
+
     return {"message": f"Prompt '{name}' added successfully.", "data": res.data}
 
-def get_prompts():
-    res = supabase.table("prompts").select("id, name, prompt, is_active").execute()
+def get_prompts(user_id: str):
+    res = (
+        supabase.table("prompts")
+        .select("id, name, prompt, is_active")
+        .eq("user_id", user_id)
+        .execute()
+    )
     return {"prompts": res.data or []}
 
-def edit_prompt(old_name: str, new_name: str = None, new_prompt: str = None):
-    existing = supabase.table("prompts").select("id").eq("name", old_name).execute()
+
+
+def edit_prompt(old_name: str, new_prompt: str, user_id: str):
+    existing = (
+        supabase.table("prompts")
+        .select("id")
+        .eq("name", old_name)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
     if not existing.data:
-        return {"error": f"Prompt '{old_name}' not found."}
-    update_data = {}
-    if new_name:
-        update_data["name"] = new_name
-    if new_prompt:
-        update_data["prompt"] = new_prompt
-    res = supabase.table("prompts").update(update_data).eq("name", old_name).execute()
+        return {"error": f"Prompt '{old_name}' not found for this user."}
+
+    update_data = {"prompt": new_prompt}
+
+    res = (
+        supabase.table("prompts")
+        .update(update_data)
+        .eq("name", old_name)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
     return {"message": f"Prompt '{old_name}' updated successfully.", "data": res.data}
 
-def delete_prompt(name: str):
-    existing = supabase.table("prompts").select("id").eq("name", name).execute()
+
+
+def delete_prompt(name: str, user_id: str):
+    existing = (
+        supabase.table("prompts")
+        .select("id")
+        .eq("name", name)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
     if not existing.data:
-        return {"error": f"Prompt '{name}' not found."}
-    res = supabase.table("prompts").delete().eq("name", name).execute()
+        return {"error": f"Prompt '{name}' not found for this user."}
+
+    supabase.table("prompts").delete().eq("name", name).eq("user_id", user_id).execute()
+
     return {"message": f"Prompt '{name}' deleted successfully."}
 
-def set_active_prompt(name: str):
-    supabase.table("prompts").update({"is_active": False}).neq("name", name).execute()
-    target = supabase.table("prompts").update({"is_active": True}).eq("name", name).execute()
+
+
+def set_active_prompt(name: str, user_id: str):
+    supabase.table("prompts").update({"is_active": False}).eq("user_id", user_id).execute()
+
+    target = (
+        supabase.table("prompts")
+        .update({"is_active": True})
+        .eq("name", name)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
     if not target.data:
-        return {"error": f"Prompt '{name}' not found."}
+        return {"error": f"Prompt '{name}' not found for this user."}
+
     return {"message": f"Prompt '{name}' set as active."}
 
-def get_active_prompt():
-    res = supabase.table("prompts").select("name, prompt").eq("is_active", True).limit(1).execute()
+
+
+def get_active_prompt(user_id: str):
+    res = (
+        supabase.table("prompts")
+        .select("name, prompt")
+        .eq("is_active", True)
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+
     if not res.data:
         return {"error": "No active prompt found."}
+
     return {"active_prompt": res.data[0]}
+
