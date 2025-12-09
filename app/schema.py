@@ -1,4 +1,13 @@
 from pydantic import BaseModel
+from typing import Optional
+
+class QueryRequest(BaseModel):
+    user_id: str
+    query: str
+
+
+class UploadRequest(BaseModel):
+    user_id: Optional[str] = None  # None = default KB
 
 class QueryRequest(BaseModel):
     query: str

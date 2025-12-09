@@ -1,11 +1,22 @@
 from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader
 from pathlib import Path
 
+# def read_uploaded_file(file_path: str) -> str:
+#     path = Path(file_path)
+#     if not path.exists():
+#         raise FileNotFoundError(f"File not found: {file_path}")
+
+#     loader = PyPDFLoader(str(path))
+#     docs = loader.load()
+#     return "\n".join([doc.page_content for doc in docs])
+
+
 def read_uploaded_file(file_path: str) -> str:
+    """Read PDF file and return text content"""
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
-
+    
     loader = PyPDFLoader(str(path))
     docs = loader.load()
     return "\n".join([doc.page_content for doc in docs])
