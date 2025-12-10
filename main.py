@@ -1,30 +1,24 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from supabase_auth import datetime
 from langchain_core.documents import Document
-# from pydantic import BaseModel
-from app.schema import (
-    QueryRequest,
-    PromptRequest,
-    EditPromptRequest,
-    UploadRequest,
-)
-from pathlib import Path
-import json, shutil
-import uvicorn
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 from app.config import PDF_DIR
 from app.data_loader import read_uploaded_file, clean_text, clean_metadata
 from app.tools import create_retriever_tool, check_user_has_documents
 from app.graph_builder import build_workflow
 import os
-# from app.vectorstore_weaviate import create_or_load_vectorstore, load_vectorstore
+import uvicorn
+import warnings
+from supabase import create_client
+from dotenv import load_dotenv
+
+from app.schema import (
+    QueryRequest,
+    PromptRequest,
+    EditPromptRequest,
+)
+
 from app.vectorstore_supabase import (
     create_or_load_vectorstore,
-    load_vectorstore,
     add_prompt,
     get_prompts,
     edit_prompt,
@@ -33,18 +27,14 @@ from app.vectorstore_supabase import (
     get_active_prompt,
 )
 
-import os
-from supabase import create_client
-from dotenv import load_dotenv
-load_dotenv()
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_API_KEY")
 
-if not SUPABASE_URL:
-    raise ValueError("Missing SUPABASE_URL")
-if not SUPABASE_KEY:
-    raise ValueError("Missing SUPABASE_API_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -59,7 +49,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     """Handle user query with user-specific or default KB"""
@@ -71,8 +60,19 @@ async def handle_query(request: QueryRequest):
     
     system_prompt = active_prompt_data["active_prompt"]["prompt"]
     
-    # Create retriever tool with user-specific or default KB
-    tools = create_retriever_tool(user_id=request.user_id)
+    # Determine which KB to use based on kb_type parameter
+    use_user_kb = False
+    if request.kb_type == "custom":
+        # Check if user actually has documents
+        if check_user_has_documents(request.user_id):
+            use_user_kb = True
+        else:
+            # User selected custom but has no documents, fallback to default
+            print(f"User {request.user_id} selected custom KB but has no documents. Using default KB.")
+    # If kb_type is "default", use_user_kb remains False
+    
+    # Create retriever tool with explicit KB choice
+    tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
     
     # Build and invoke workflow
     graph = build_workflow(tools, system_prompt)
@@ -108,8 +108,6 @@ async def handle_query(request: QueryRequest):
     sources = list(unique.values())
     sources = sorted(sources, key=lambda x: x.get("rerank_score", 0), reverse=True)
     
-    # print("Sources:", sources)
-    
     return {
         "response": final_ai_msg,
         "sources": sources
@@ -122,29 +120,24 @@ async def upload_user_document(
 ):
     """Upload document to user-specific KB"""
     try:
-        # Read file content
         file_content = await file.read()
         temp_path = f"/tmp/{file.filename}"
         
         with open(temp_path, "wb") as temp_file:
             temp_file.write(file_content)
         
-        # Extract text content
         content = read_uploaded_file(temp_path)
         content = clean_text(content)
         metadata = clean_metadata({"source": file.filename, "user_id": user_id})
         
-        # Create document with metadata
         doc = Document(
             page_content=content,
             # metadata={"source": file.filename}
             metadata=metadata
         )
         
-        # Store in vectorstore with user_id
         create_or_load_vectorstore([doc], user_id=user_id)
         
-        # Clean up temp file
         os.remove(temp_path)
         
         return {
@@ -183,10 +176,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def get_user_documents(user_id: str):
     """Get all documents for a specific user"""
     try:
-        response = supabase.table("documents")\
-            .select("id, metadata, user_id")\
-            .eq("user_id", user_id)\
-            .execute()
+        response = supabase.table("documents").select("id, metadata, user_id").eq("user_id", user_id).execute()
         
         documents = []
         for doc in response.data:
@@ -208,20 +198,13 @@ async def delete_user_document(user_id: str, document_id: str):
     """Delete a user's document"""
     try:
         # Verify document belongs to user
-        check = supabase.table("documents")\
-            .select("id")\
-            .eq("id", document_id)\
-            .eq("user_id", user_id)\
-            .execute()
+        check = supabase.table("documents").select("id").eq("id", document_id).eq("user_id", user_id).execute()
         
         if not check.data:
             raise HTTPException(status_code=404, detail="Document not found or doesn't belong to user")
         
         # Delete document
-        supabase.table("documents")\
-            .delete()\
-            .eq("id", document_id)\
-            .execute()
+        supabase.table("documents").delete().eq("id", document_id).execute()
         
         return {"status": "success", "message": "Document deleted"}
     
@@ -236,102 +219,6 @@ async def check_user_kb(user_id: str):
     has_kb = check_user_has_documents(user_id)
     return {"has_personal_kb": has_kb}
 
-
-# @app.post("/query")
-# async def handle_query(request: QueryRequest):
-#     active_prompt_data = get_active_prompt(request.user_id)
-#     if not active_prompt_data or "active_prompt" not in active_prompt_data:
-#         raise HTTPException(status_code=404, detail="No active prompt found for this user.")
-    
-#     system_prompt = active_prompt_data["active_prompt"]["prompt"]
-#     tools = create_retriever_tool()
-#     graph = build_workflow(tools, system_prompt)
-#     config = {"configurable": {"thread_id": "1"}}
-
-#     result = graph.invoke({"messages": request.query}, config=config)
-#     messages = result["messages"]
-
-#     final_ai_msg = None
-#     for msg in messages:
-#         if msg.__class__.__name__ == "AIMessage" and msg.content:
-#             final_ai_msg = msg.content
-
-#     sources = []
-#     for msg in messages:
-#         if msg.__class__.__name__ == "ToolMessage":
-#             if hasattr(msg, "artifact") and msg.artifact:
-#                 for item in msg.artifact:
-#                     sources.append({
-#                         "source": item["metadata"].get("source"),
-#                         "content": item["page_content"],
-#                         "rerank_score": item.get("rerank_score")
-#                     })
-
-#     unique = {}
-#     for s in sources:
-#         key = s["source"]
-#         if key not in unique:
-#             unique[key] = s
-
-#     sources = list(unique.values())
-#     sources = sorted(sources, key=lambda x: x.get("rerank_score", 0), reverse=True)
-
-#     print("Sources:", sources)
-
-#     return {
-#         "response": final_ai_msg,
-#         "sources": sources
-#     }
-
-
-# @app.post("/upload")
-# async def upload_file(file: UploadFile = File(...)):
-#     try:
-#         file_content = await file.read()
-#         temp_path = f"/tmp/{file.filename}"
-#         with open(temp_path, "wb") as temp_file:
-#             temp_file.write(file_content)
-
-#         content = read_uploaded_file(temp_path)
-#         doc = Document(page_content=content, metadata={"source": file.filename})
-
-#         vectorstore = create_or_load_vectorstore([doc])
-#         os.remove(temp_path)
-
-#         return {"status": "success", "filename": file.filename}
-#     except Exception as e:
-#         return {"status": "failed", "error": str(e)}
-
-
-# @app.post("/add_prompt")
-# def add_prompt_endpoint(request: PromptRequest):
-#     result = add_prompt(request.name, request.prompt)
-#     return {"status": "success", "result": result}
-#     # return add_prompt(request.name, request.prompt)
-
-# @app.get("/get_prompts")
-# def get_prompts_endpoint():
-#     return get_prompts()
-
-# # @app.put("/edit_prompt")
-# # def edit_prompt_endpoint(request: EditPromptRequest):
-# #     return edit_prompt(request.old_name, request.new_name, request.new_prompt)
-
-# @app.put("/edit_prompt")
-# def edit_prompt_endpoint(request: EditPromptRequest):
-#     return edit_prompt(request.old_name, request.new_prompt)
-
-# @app.delete("/delete_prompt/{name}")
-# def delete_prompt_endpoint(name: str):
-#     return delete_prompt(name)
-
-# @app.post("/set_active_prompt/{name}")
-# def set_active_prompt_endpoint(name: str):
-#     return set_active_prompt(name)
-
-# @app.get("/get_active_prompt")
-# def get_active_prompt_endpoint():
-#     return get_active_prompt()
 
 @app.post("/add_prompt")
 def add_prompt_endpoint(request: PromptRequest):

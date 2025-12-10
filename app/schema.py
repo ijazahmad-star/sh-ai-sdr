@@ -1,9 +1,13 @@
 from pydantic import BaseModel
 from typing import Optional
 
-class QueryRequest(BaseModel):
-    user_id: str
-    query: str
+# class QueryRequest(BaseModel):
+#     user_id: str
+#     query: str
+# class QueryRequest(BaseModel):
+#     query: str
+#     user_id: str
+#     kb_type: Optional[str] = "default" 
 
 
 class UploadRequest(BaseModel):
@@ -12,6 +16,7 @@ class UploadRequest(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     user_id: str
+    kb_type: Optional[str] = "default" 
 
 class PromptRequest(BaseModel):
     name: str
