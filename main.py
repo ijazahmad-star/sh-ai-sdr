@@ -63,30 +63,25 @@ async def handle_query(request: QueryRequest):
     # Determine which KB to use based on kb_type parameter
     use_user_kb = False
     if request.kb_type == "custom":
-        # Check if user actually has documents
-        if check_user_has_documents(request.user_id):
-            use_user_kb = True
-        else:
-            # User selected custom but has no documents, fallback to default
-            print(f"User {request.user_id} selected custom KB but has no documents. Using default KB.")
-    # If kb_type is "default", use_user_kb remains False
+        use_user_kb = True
+        # if check_user_has_documents(request.user_id):
+        #     use_user_kb = True
+        # else:
+        #     # User selected custom but has no documents, fallback to default
+        #     print(f"User {request.user_id} selected custom KB but has no documents. Using default KB.")
     
-    # Create retriever tool with explicit KB choice
     tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
     
-    # Build and invoke workflow
     graph = build_workflow(tools, system_prompt)
     config = {"configurable": {"thread_id": "1"}}
     result = graph.invoke({"messages": request.query}, config=config)
     messages = result["messages"]
     
-    # Extract AI response
     final_ai_msg = None
     for msg in messages:
         if msg.__class__.__name__ == "AIMessage" and msg.content:
             final_ai_msg = msg.content
     
-    # Extract sources
     sources = []
     for msg in messages:
         if msg.__class__.__name__ == "ToolMessage":
@@ -120,12 +115,15 @@ async def upload_user_document(
 ):
     """Upload document to user-specific KB"""
     try:
+        print("Reading file...")
         file_content = await file.read()
         temp_path = f"/tmp/{file.filename}"
         
+        print("Opening file...")
         with open(temp_path, "wb") as temp_file:
             temp_file.write(file_content)
         
+        print("Preprocessing file...")
         content = read_uploaded_file(temp_path)
         content = clean_text(content)
         metadata = clean_metadata({"source": file.filename, "user_id": user_id})
@@ -136,10 +134,12 @@ async def upload_user_document(
             metadata=metadata
         )
         
+        print("Storing file...")
         create_or_load_vectorstore([doc], user_id=user_id)
         
         os.remove(temp_path)
         
+        print("Successfully store file...!")
         return {
             "status": "success",
             "filename": file.filename,

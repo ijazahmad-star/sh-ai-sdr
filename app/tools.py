@@ -121,6 +121,24 @@ def check_user_has_documents(user_id: str) -> bool:
     response = supabase.table("documents").select("id").eq("user_id", user_id).limit(1).execute()
     return len(response.data) > 0
 
+def check_user_has_access_to_default(user_id: str)-> bool:
+    """
+    Docstring for check_user_has_access_to_default
+    
+    :param user_id: Description
+    :type user_id: str
+    :return: Description
+    :rtype: bool
+    """
+    response = supabase.table("kb_access").select("hasAccessToDefaultKB").eq("userId", user_id).execute()
+    if response.data and response.data[0]["hasAccessToDefaultKB"]:
+        print("User has access to the default KB")
+        return True
+    else:
+        print("User does not have access to the default KB")
+        return False
+
+
 def create_retriever_tool(user_id: str = None, force_user_kb: bool = False):
     """
     Create retriever tool for specific user or default KB

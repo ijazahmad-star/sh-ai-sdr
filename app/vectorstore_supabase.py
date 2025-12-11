@@ -130,6 +130,7 @@ def create_or_load_vectorstore(docs=None, user_id: str = None):
 
     if docs:
         # Split documents into chunks
+        print("Splitting docs...")
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=500,
             chunk_overlap=50
@@ -141,6 +142,7 @@ def create_or_load_vectorstore(docs=None, user_id: str = None):
             chunk.metadata["user_id"] = user_id  # can be None for shared KB
 
         # Prepare data for direct insertion
+        print("Rows...")
         rows_to_insert = []
         for chunk in chunks:
             rows_to_insert.append({
@@ -151,6 +153,7 @@ def create_or_load_vectorstore(docs=None, user_id: str = None):
             })
 
         # Insert into Supabase
+        print("Starting storing...")
         res = supabase.table(table_name).insert(rows_to_insert).execute()
 
         print(f"Inserted {len(chunks)} documents into Supabase for user_id={user_id}")
