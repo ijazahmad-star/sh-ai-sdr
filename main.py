@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.documents import Document
 from app.config import PDF_DIR
 from app.data_loader import read_uploaded_file, clean_text, clean_metadata
-from app.tools import create_retriever_tool, check_user_has_documents
+from app.tools import create_retriever_tool, check_user_has_documents, check_user_has_access_to_default
 from app.graph_builder import build_workflow
 import os
 import uvicorn
@@ -49,6 +49,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     """Handle user query with user-specific or default KB"""
@@ -64,11 +66,6 @@ async def handle_query(request: QueryRequest):
     use_user_kb = False
     if request.kb_type == "custom":
         use_user_kb = True
-        # if check_user_has_documents(request.user_id):
-        #     use_user_kb = True
-        # else:
-        #     # User selected custom but has no documents, fallback to default
-        #     print(f"User {request.user_id} selected custom KB but has no documents. Using default KB.")
     
     tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
     
@@ -212,6 +209,20 @@ async def delete_user_document(user_id: str, document_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.delete("/delete_user_document/{user_id}")
+async def delete_user_document(user_id: str):
+    """Delete a user's document"""
+    try:
+        # Delete document
+        supabase.table("documents").delete().eq("user_id", user_id).execute()
+        
+        return {"status": "success", "message": "All documents deleted"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/check_user_kb/{user_id}")
 async def check_user_kb(user_id: str):
@@ -219,6 +230,10 @@ async def check_user_kb(user_id: str):
     has_kb = check_user_has_documents(user_id)
     return {"has_personal_kb": has_kb}
 
+@app.get("/check_user_has_access_to_default_kb/{user_id}")
+def checkAccessToDefault(user_id: str):
+    hasAccess = check_user_has_access_to_default(user_id)
+    return {"has_access_to_default": hasAccess}
 
 @app.post("/add_prompt")
 def add_prompt_endpoint(request: PromptRequest):
