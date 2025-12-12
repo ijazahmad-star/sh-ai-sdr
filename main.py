@@ -8,6 +8,7 @@ from app.graph_builder import build_workflow
 import os
 import uvicorn
 import warnings
+import uuid
 from supabase import create_client
 from dotenv import load_dotenv
 
@@ -32,11 +33,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_API_KEY")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_API_KEY")
 
-if not SUPABASE_URL or not SUPABASE_KEY:
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
 app = FastAPI(title="Strategisthub Email Assistant API")
@@ -105,46 +107,140 @@ async def handle_query(request: QueryRequest):
         "sources": sources
     }
 
+# @app.post("/upload_user_document")
+# async def upload_user_document(
+#     file: UploadFile = File(...),
+#     user_id: str = Form(...)
+# ):
+#     """Upload document to user-specific KB"""
+#     try:
+#         print("Reading file...")
+#         file_content = await file.read()
+#         temp_path = f"/tmp/{file.filename}"
+        
+#         print("Opening file...")
+#         with open(temp_path, "wb") as temp_file:
+#             temp_file.write(file_content)
+        
+#         print("Preprocessing file...")
+#         content = read_uploaded_file(temp_path)
+#         content = clean_text(content)
+#         metadata = clean_metadata({"source": file.filename, "user_id": user_id})
+        
+#         doc = Document(
+#             page_content=content,
+#             # metadata={"source": file.filename}
+#             metadata=metadata
+#         )
+        
+#         print("Storing file...")
+#         create_or_load_vectorstore([doc], user_id=user_id)
+        
+#         os.remove(temp_path)
+        
+#         print("Successfully store file...!")
+#         return {
+#             "status": "success",
+#             "filename": file.filename,
+#             "user_id": user_id
+#         }
+    
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/upload_user_document")
 async def upload_user_document(
     file: UploadFile = File(...),
     user_id: str = Form(...)
 ):
-    """Upload document to user-specific KB"""
     try:
-        print("Reading file...")
-        file_content = await file.read()
-        temp_path = f"/tmp/{file.filename}"
-        
-        print("Opening file...")
-        with open(temp_path, "wb") as temp_file:
-            temp_file.write(file_content)
-        
-        print("Preprocessing file...")
-        content = read_uploaded_file(temp_path)
-        content = clean_text(content)
-        metadata = clean_metadata({"source": file.filename, "user_id": user_id})
-        
-        doc = Document(
-            page_content=content,
-            # metadata={"source": file.filename}
-            metadata=metadata
+        content = await file.read()
+
+        file_id = str(uuid.uuid4())
+        storage_path = f"{user_id}/{file_id}-{file.filename}"
+
+        supabase.storage.from_("user_documents").upload(
+            storage_path,
+            content,
+            {"content-type": file.content_type},
         )
-        
-        print("Storing file...")
-        create_or_load_vectorstore([doc], user_id=user_id)
-        
-        os.remove(temp_path)
-        
-        print("Successfully store file...!")
-        return {
-            "status": "success",
+
+        supabase.table("user_files").insert({
+            "user_id": user_id,
             "filename": file.filename,
-            "user_id": user_id
-        }
-    
+            "storage_path": storage_path
+        }).execute()
+
+        temp_path = f"/tmp/{file.filename}"
+        with open(temp_path, "wb") as f:
+            f.write(content)
+
+        text = read_uploaded_file(temp_path)
+        text = clean_text(text)
+
+        doc = Document(
+            page_content=text,
+            metadata={"source": file.filename, "user_id": user_id}
+        )
+
+        create_or_load_vectorstore([doc], user_id=user_id)
+
+        os.remove(temp_path)
+
+        return {"status": "success", "file": file.filename}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/get_user_documents/{user_id}")
+def get_user_documents(user_id: str):
+    res = supabase.table("user_files").select("*").eq("user_id", user_id).execute()
+    return {"documents": res.data}
+
+@app.get("/download_user_document/{file_id}")
+def download_user_document(file_id: str, user_id: str):
+    record = supabase.table("user_files").select("*").eq("id", file_id).execute()
+
+    if not record.data or len(record.data) == 0:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file = record.data[0]
+
+    if file["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    url = supabase.storage.from_("user_documents").create_signed_url(file["storage_path"], 60)
+
+    return {"download_url": url["signedUrl"]}
+
+
+
+@app.delete("/delete_user_document/{file_id}")
+def delete_user_document(file_id: str, user_id: str):
+    record = supabase.table("user_files").select("*").eq("id", file_id).execute()
+
+    if not record.data or len(record.data) == 0:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file = record.data[0]
+
+    if file["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+
+    # Remove the file from Supabase Storage
+    supabase.storage.from_("user_documents").remove([file["storage_path"]])
+
+    # Delete all related chunks in documents table
+    supabase.table("documents").delete().match({
+        "metadata->>source": file["filename"],
+        "user_id": user_id
+    }).execute()
+
+    # Delete the record from user_files table
+    supabase.table("user_files").delete().eq("id", file_id).execute()
+
+    return {"status": "deleted"}
+
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -210,19 +306,23 @@ async def delete_user_document(user_id: str, document_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.delete("/delete_user_document/{user_id}")
-async def delete_user_document(user_id: str):
-    """Delete a user's document"""
-    try:
-        # Delete document
-        supabase.table("documents").delete().eq("user_id", user_id).execute()
-        
-        return {"status": "success", "message": "All documents deleted"}
+@app.delete("/admin/delete_user/{target_user_id}")
+def admin_delete_user(target_user_id: str):
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    files = supabase.table("user_files").select("*").eq("user_id", target_user_id).execute().data
+
+    if files:
+        storage_paths = [f["storage_path"] for f in files]
+        supabase.storage.from_("user_documents").remove(storage_paths)
+        for f in files:
+            supabase.table("documents").delete().match({
+                "metadata->>source": f["filename"],
+                "user_id": target_user_id
+            }).execute()
+
+        supabase.table("user_files").delete().eq("user_id", target_user_id).execute()
+
+    return {"status": "deleted", "files_deleted": len(files)}
 
 @app.get("/check_user_kb/{user_id}")
 async def check_user_kb(user_id: str):
