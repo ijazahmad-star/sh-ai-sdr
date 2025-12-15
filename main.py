@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from langchain_core.messages import SystemMessage
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.documents import Document
 from app.config import PDF_DIR
@@ -26,6 +27,8 @@ from app.vectorstore_supabase import (
     delete_prompt,
     set_active_prompt,
     get_active_prompt,
+    fetch_conversation_messages,
+    to_lc_messages,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -70,10 +73,14 @@ async def handle_query(request: QueryRequest):
         use_user_kb = True
     
     tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
+    raw_messages = fetch_conversation_messages(request.conversation_id)
+    raw_messages.append({"role": "user", "content": request.query})
+    lc_messages = [SystemMessage(content=system_prompt)] + to_lc_messages(raw_messages)
     
     graph = build_workflow(tools, system_prompt)
-    config = {"configurable": {"thread_id": "1"}}
-    result = graph.invoke({"messages": request.query}, config=config)
+    config = {"configurable": {"thread_id": request.conversation_id}}
+    # result = graph.invoke({"messages": request.query}, config=config)
+    result = graph.invoke({"messages": lc_messages}, config=config)
     messages = result["messages"]
     
     final_ai_msg = None
