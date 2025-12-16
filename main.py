@@ -27,8 +27,6 @@ from app.vectorstore_supabase import (
     delete_prompt,
     set_active_prompt,
     get_active_prompt,
-    fetch_conversation_messages,
-    to_lc_messages,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -42,6 +40,9 @@ if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+SUPABASE_DB_URI = os.getenv("SUPABASE_DB_URI")
+from langgraph.checkpoint.postgres import PostgresSaver 
 
 
 app = FastAPI(title="Strategisthub Email Assistant API")
@@ -66,94 +67,66 @@ async def handle_query(request: QueryRequest):
         raise HTTPException(status_code=404, detail="No active prompt found for this user.")
     
     system_prompt = active_prompt_data["active_prompt"]["prompt"]
-    
-    # Determine which KB to use based on kb_type parameter
+
     use_user_kb = False
     if request.kb_type == "custom":
         use_user_kb = True
     
     tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
-    raw_messages = fetch_conversation_messages(request.conversation_id)
-    raw_messages.append({"role": "user", "content": request.query})
-    lc_messages = [SystemMessage(content=system_prompt)] + to_lc_messages(raw_messages)
+ 
+    with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:  
+        checkpointer.setup()
+        graph = build_workflow(tools, system_prompt, checkpointer)
+        config = {"configurable": {"thread_id": request.conversation_id}}
+        result = graph.invoke({"messages": request.query}, config=config)
+        # result = graph.invoke({"messages": messages}, config=config)
+        messages = result["messages"]
+        
+        final_ai_msg = None
+        for msg in messages:
+            if msg.__class__.__name__ == "AIMessage" and msg.content:
+                final_ai_msg = msg.content
+        
+        sources = []
+        if request.kb_type == "custom":
+            for msg in messages:
+                if msg.__class__.__name__ == "ToolMessage":
+                    if hasattr(msg, "artifact") and msg.artifact:
+                        for item in msg.artifact:
+                            sources.append({
+                                "source": item["metadata"].get("source"),
+                                "content": item["page_content"],
+                                "rerank_score": item.get("rerank_score")
+                            })
+            
+            # Deduplicate and sort sources
+            unique = {}
+            for s in sources:
+                key = s["source"]
+                if key not in unique:
+                    unique[key] = s
+            
+            sources = list(unique.values())
+            sources = sorted(sources, key=lambda x: x.get("rerank_score", 0), reverse=True)
+        
+        return {
+            "response": final_ai_msg,
+            "sources": sources
+        }
     
-    graph = build_workflow(tools, system_prompt)
-    config = {"configurable": {"thread_id": request.conversation_id}}
-    # result = graph.invoke({"messages": request.query}, config=config)
-    result = graph.invoke({"messages": lc_messages}, config=config)
-    messages = result["messages"]
-    
-    final_ai_msg = None
-    for msg in messages:
-        if msg.__class__.__name__ == "AIMessage" and msg.content:
-            final_ai_msg = msg.content
-    
-    sources = []
-    for msg in messages:
-        if msg.__class__.__name__ == "ToolMessage":
-            if hasattr(msg, "artifact") and msg.artifact:
-                for item in msg.artifact:
-                    sources.append({
-                        "source": item["metadata"].get("source"),
-                        "content": item["page_content"],
-                        "rerank_score": item.get("rerank_score")
-                    })
-    
-    # Deduplicate and sort sources
-    unique = {}
-    for s in sources:
-        key = s["source"]
-        if key not in unique:
-            unique[key] = s
-    
-    sources = list(unique.values())
-    sources = sorted(sources, key=lambda x: x.get("rerank_score", 0), reverse=True)
-    
-    return {
-        "response": final_ai_msg,
-        "sources": sources
-    }
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation_history(conversation_id: str):
+    """
+    Delete all stored history for a conversation (thread) in Postgres checkpointer.
+    """
+    try:
+        with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:
+            # Remove all checkpointed state for this thread
+            checkpointer.delete_thread(conversation_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete conversation: {str(e)}")
 
-# @app.post("/upload_user_document")
-# async def upload_user_document(
-#     file: UploadFile = File(...),
-#     user_id: str = Form(...)
-# ):
-#     """Upload document to user-specific KB"""
-#     try:
-#         print("Reading file...")
-#         file_content = await file.read()
-#         temp_path = f"/tmp/{file.filename}"
-        
-#         print("Opening file...")
-#         with open(temp_path, "wb") as temp_file:
-#             temp_file.write(file_content)
-        
-#         print("Preprocessing file...")
-#         content = read_uploaded_file(temp_path)
-#         content = clean_text(content)
-#         metadata = clean_metadata({"source": file.filename, "user_id": user_id})
-        
-#         doc = Document(
-#             page_content=content,
-#             # metadata={"source": file.filename}
-#             metadata=metadata
-#         )
-        
-#         print("Storing file...")
-#         create_or_load_vectorstore([doc], user_id=user_id)
-        
-#         os.remove(temp_path)
-        
-#         print("Successfully store file...!")
-#         return {
-#             "status": "success",
-#             "filename": file.filename,
-#             "user_id": user_id
-#         }
-    
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e))
+    return {"message": "Conversation history deleted successfully."}
 
 @app.post("/upload_user_document")
 async def upload_user_document(

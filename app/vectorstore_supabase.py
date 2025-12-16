@@ -19,6 +19,19 @@ embeddings = OpenAIEmbeddings()
 
 from langchain_core.messages import HumanMessage, AIMessage
 
+
+MEMORY_TABLE = "user_memories"  # make sure this table exists in Supabase
+
+def save_memory(user_id: str, text: str):
+    supabase.table(MEMORY_TABLE).insert({
+        "user_id": user_id,
+        "memory_text": text
+    }).execute()
+
+def load_memories(user_id: str):
+    result = supabase.table(MEMORY_TABLE).select("*").eq("user_id", user_id).execute()
+    return [r["memory_text"] for r in result.data]
+
 def to_lc_messages(raw_messages):
 
     print("Converting into langchain format...")
