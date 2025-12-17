@@ -24,8 +24,8 @@ SH Smart AI Assistant is a FastAPI-based backend service that provides intellige
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
-cd sh-smart-ai-assistant
+git clone https://github.com/strategisthub/sh-ai-assistant.git
+cd sh-ai-assistant
 
 ```
 
