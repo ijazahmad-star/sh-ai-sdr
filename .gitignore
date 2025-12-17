@@ -10,6 +10,8 @@ wheels/
 .venv
 .env 
 
+# alembic.ini
+
 
 # dataset
 data/
