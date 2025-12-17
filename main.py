@@ -200,7 +200,7 @@ def delete_user_document(file_id: str, user_id: str):
 
     # Delete all related chunks in documents table
     supabase.table("documents").delete().match({
-        "metadata->>source": file["filename"],
+        "document_metadata->>source": file["filename"],
         "user_id": user_id
     }).execute()
 

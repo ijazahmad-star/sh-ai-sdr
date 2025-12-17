@@ -53,6 +53,7 @@ uv sync
 # Or explicitly create environment and install
 uv venv
 source .venv/bin/activate  # On macOS/Linux
+uv add -r requirements.txt
 # On Windows: .venv\Scripts\activate
 uv pip install -r pyproject.toml
 ```
@@ -66,7 +67,7 @@ Create a .env file in the root directory:
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_KEY=your_supabase_service_key
-DATABASE_URL=your_database_connection_string
+DATABASE_URL=your_database_connection_string 
 
 # AI Service Configuration
 OPENAI_API_KEY=your_openai_api_key
@@ -85,7 +86,20 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "vector";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 ```
-
+### 6. Perform Migrations
+```bash
+# To perform this actions must use Session Pooler connection string
+# sqlalchemy.url = "your session connection string" in the file alembic.ini
+uv pip install -r requirements.txt
+# Following command will generate a migrations folder
+alembic init migrations 
+# This will run initial migrations
+alembic revision --autogenerate -m "initial schema"
+# To make changes available on supabase
+alembic upgrade head
+# if tables are already there use following command
+alembic stamp head
+```
 ## Project Structure
 
 ```text
@@ -97,7 +111,8 @@ sh-smart-ai-assistant/
 │   ├── graph_builder.py
 │   ├── schema.py
 │   ├── tools.py
-│   ├── ui.py           # just for testing
+|   ├── models.py                   # contain all the tables - for auto generate tables on supabase
+│   ├── ui.py                       # just for testing
 │   ├── vectorstore_supabas.py      # handle supabase db
 │   ├── vectorstore_weaviate.py     # hanlde weaviate db, if you want to switch
 │   ├── vectorstore.py              # handle faiss db
