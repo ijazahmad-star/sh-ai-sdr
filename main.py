@@ -10,8 +10,6 @@ import os
 import uvicorn
 import warnings
 import uuid
-from supabase import create_client
-from dotenv import load_dotenv
 
 from app.schema import (
     QueryRequest,
@@ -28,20 +26,10 @@ from app.vectorstore_supabase import (
     set_active_prompt,
     get_active_prompt,
 )
-
+from app.config import (
+    supabase,SUPABASE_DB_URI,
+)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-load_dotenv()
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_API_KEY")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_API_KEY")
-
-if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-    raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
-
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
-SUPABASE_DB_URI = os.getenv("SUPABASE_DB_URI")
 from langgraph.checkpoint.postgres import PostgresSaver 
 
 
@@ -222,28 +210,28 @@ def delete_user_document(file_id: str, user_id: str):
     return {"status": "deleted"}
 
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Upload document to DEFAULT KB (for admin use)"""
-    try:
-        file_content = await file.read()
-        temp_path = f"/tmp/{file.filename}"
+# @app.post("/upload")
+# async def upload_file(file: UploadFile = File(...)):
+#     """Upload document to DEFAULT KB (for admin use)"""
+#     try:
+#         file_content = await file.read()
+#         temp_path = f"/tmp/{file.filename}"
         
-        with open(temp_path, "wb") as temp_file:
-            temp_file.write(file_content)
+#         with open(temp_path, "wb") as temp_file:
+#             temp_file.write(file_content)
         
-        content = read_uploaded_file(temp_path)
-        doc = Document(page_content=content, metadata={"source": file.filename})
+#         content = read_uploaded_file(temp_path)
+#         doc = Document(page_content=content, metadata={"source": file.filename})
         
-        # Store in default KB (user_id = None)
-        create_or_load_vectorstore([doc], user_id=None)
+#         # Store in default KB (user_id = None)
+#         create_or_load_vectorstore([doc], user_id=None)
         
-        os.remove(temp_path)
+#         os.remove(temp_path)
         
-        return {"status": "success", "filename": file.filename}
+#         return {"status": "success", "filename": file.filename}
     
-    except Exception as e:
-        return {"status": "failed", "error": str(e)}
+#     except Exception as e:
+#         return {"status": "failed", "error": str(e)}
 
 @app.get("/get_user_documents/{user_id}")
 async def get_user_documents(user_id: str):

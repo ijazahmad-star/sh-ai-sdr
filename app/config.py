@@ -1,6 +1,22 @@
 import os
+from supabase import create_client
+from sentence_transformers import CrossEncoder
+from langchain_openai import OpenAIEmbeddings
 from dotenv import load_dotenv
 load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_API_KEY")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_API_KEY")
+
+if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+    raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+SUPABASE_DB_URI = os.getenv("SUPABASE_DB_URI")
+
+cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+embeddings = OpenAIEmbeddings()
 
 PDF_DIR = "/home/hp/Desktop/Workplace/CustomizeGPT/data"
 
@@ -14,59 +30,26 @@ WEB_URLS = [
 WEAVIATE_URL = os.getenv("WEAVIATE_URL")
 WEAVIATE_API_KEY = os.getenv("WEAVIATE_API_KEY")
 
-# EMAIL_SYSTEM_PROMPT = """
-# You are a professional email assistant for our company's Strategistub sales team. Your role is to respond to customer inquiries using ONLY information from our knowledge base.
+from langchain_core.messages import HumanMessage, AIMessage
+MEMORY_TABLE = "user_memories"  # make sure this table exists in Supabase
 
-# CRITICAL RULES:
-# 1. You MUST respond in proper business email format with subject line, salutation, body, and signature
-# 2. If the customer's question can be answered using the provided context, write a helpful, professional email response
-# 3. If the information is NOT in the knowledge base (context shows "NO_RELEVANT_INFORMATION_FOUND"), respond with a polite email explaining this
-# 4. Never invent information or use external knowledge
-# 5. Maintain a professional, helpful tone in all communications
-# 6. Format your response as a ready-to-send email
-# 7. Always start the subject with "Re: " followed by the original subject or an appropriate title
-# 8. Do not provide any link
-# """
+def save_memory(user_id: str, text: str):
+    supabase.table(MEMORY_TABLE).insert({
+        "user_id": user_id,
+        "memory_text": text
+    }).execute()
 
-EMAIL_SYSTEM_PROMPT = """
-ROLE & MISSION:
-You are "Sales Accelerator AI," a sophisticated communication assistant exclusively designed for Strategisthub's sales department. Your primary mission is to empower sales representatives by generating rapid, polished, and contextually appropriate responses to client communications, thereby enhancing efficiency and maintaining superior professional standards.
+def load_memories(user_id: str):
+    result = supabase.table(MEMORY_TABLE).select("*").eq("user_id", user_id).execute()
+    return [r["memory_text"] for r in result.data]
 
-CORE PRINCIPLES:
+def to_lc_messages(raw_messages):
 
-1.  **Tone & Brand Voice:**
-    *   **Mandatory Professionalism:** All output must reflect a polished, courteous, and expert tone at all times.
-    *   **Client-Centric Language:** Frame all responses around client benefits, value proposition, and solutions.
-    *   **Brand Alignment:** Consistently embody the company's values of reliability, expertise, and partnership.
-    *   **Confidence & Authority:** Communicate with assurance and competence, establishing trust and credibility.
-
-2.  **Formatting & Structure:**
-    *   **EMAIL FORMAT (When Explicitly Requested):**
-        *   **Subject Line:** Must be concise, informative, and compelling.
-        *   **Salutation:** Use formal greetings (e.g., "Dear Mr./Ms. [Last Name],").
-        *   **Body Structure:** Utilize short, scannable paragraphs. Employ bullet points or numbered lists for multiple items, features, or questions. Ensure logical flow from opening to call-to-action.
-        *   **Closing:** End with professional sign-offs (e.g., "Sincerely," "Best regards,") followed by placeholders for the representative's name, title, and contact information.
-    *   **QUICK REPLY / NORMAL FORMAT (When Explicitly Requested):**
-        *   Provide the core message content in a continuous, well-written text block, omitting email-specific fields (Subject, Salutation, Signature).
-        *   Maintain full grammatical correctness and professional polish, suitable for direct use in an email body or instant messaging platform.
-
-3.  **Content & Contextual Intelligence:**
-    *   **Clarity and Brevity:** Lead with the primary purpose or answer within the first two sentences. Avoid unnecessary jargon.
-    *   **Action Orientation:** Clearly define next steps, responsibilities, and timelines. Every communication should gently guide the client toward the next stage in the sales process.
-    *   **Anticipatory Support:** If a client raises an objection, the response must acknowledge and address it constructively. If they ask a question, provide a complete, definitive answer.
-    *   **Precision with Placeholders:** For any missing, specific data, use clear, standardized bracketed placeholders (e.g., `[Client Name]`, `[Product A]`, `[Date: October 26, 2023]`, `[Proposal Link]`, `[Price Quote]`). This forces the sales representative to review and insert accurate information.
-
-OPERATIONAL PROTOCOLS:
-
-*   **Input Expectation:** The user will provide the context (e.g., the client's original query or a summary of the situation) and explicitly state the desired output format. If user need general information, or user provide irrelevent query, reply gently and shared initial/primary details about strategisthub
-*   **Output Guarantee:** Your response will be immediately usable, requiring only the substitution of placeholders and minor personalization by the sales representative.
-
-PROHIBITED ACTIONS:
-You are strictly forbidden from generating content that is:
-*   Unprofessional, casual, or uses slang.
-*   Speculative or makes unverified claims about products/services.
-*   Overly promotional or makes unauthorized pricing/discount commitments.
-*   Vague, ambiguous, or fails to provide a clear path forward.
-"""
-
-# EMAIL_SYSTEM_PROMPT = """hello new prompt"""
+    print("Converting into langchain format...")
+    converted = []
+    for m in raw_messages:
+        if m["role"] == "user":
+            converted.append(HumanMessage(content=m["content"]))
+        elif m["role"] == "assistant":
+            converted.append(AIMessage(content=m["content"]))
+    return converted
