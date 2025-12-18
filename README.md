@@ -4,6 +4,8 @@
 
 SH Smart AI Assistant is a FastAPI-based backend service that provides intelligent AI agent interactions, document processing, and conversation management. The system leverages Supabase for database operations and vector storage, enabling efficient document retrieval and conversational AI capabilities
 
+### [SYSTEM ARCHITECTURE ](SystemArchitecture.md)
+
 ## Tech Stack
 
 - Framework: FastAPI (Python 3.8+)
@@ -67,7 +69,7 @@ Create a .env file in the root directory:
 SUPABASE_URL=your_supabase_project_url
 SUPABASE_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_KEY=your_supabase_service_key
-DATABASE_URL=your_database_connection_string 
+DATABASE_URL=your_database_connection_string
 
 # AI Service Configuration
 OPENAI_API_KEY=your_openai_api_key
@@ -86,13 +88,15 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "vector";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 ```
+
 ### 6. Perform Migrations
+
 ```bash
 # To perform this actions must use Session Pooler connection string
 # sqlalchemy.url = "your session connection string" in the file alembic.ini
 uv pip install -r requirements.txt
 # Following command will generate a migrations folder
-alembic init migrations 
+alembic init migrations
 # This will run initial migrations
 alembic revision --autogenerate -m "initial schema"
 # To make changes available on supabase
@@ -100,6 +104,7 @@ alembic upgrade head
 # if tables are already there use following command
 alembic stamp head
 ```
+
 ## Project Structure
 
 ```text
@@ -125,7 +130,9 @@ sh-smart-ai-assistant/
 ├── .gitignore
 └── README.md
 ```
+
 ## Running the Application with uv
+
 ```bash
 # Activate the virtual environment (uv creates .venv by default)
 source .venv/bin/activate  # On macOS/Linux
