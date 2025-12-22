@@ -105,7 +105,42 @@ async def handle_query(request: QueryRequest):
             "response": final_ai_msg,
             "sources": sources
         }
-    
+from langchain_core.messages import BaseMessage
+
+@app.get("/conversations/{conversation_id}")
+async def get_conversation_history(conversation_id: str):
+    try:
+        config = {"configurable": {"thread_id": conversation_id}}
+        
+        with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:
+            state = checkpointer.get_tuple(config)
+            
+            if not state:
+                return {"messages": []}
+
+            # Get the raw LangChain message objects
+            raw_messages = state.checkpoint.get("channel_values", {}).get("messages", [])
+
+            # Format them for the frontend
+            formatted_messages = []
+            for msg in raw_messages:
+                # Determine role: 'user' for HumanMessage, 'assistant' for AIMessage
+                role = "user" if msg.type == "human" else "assistant"
+                formatted_messages.append({
+                    "id": getattr(msg, 'id', None),
+                    "role": role,
+                    "content": msg.content
+                })
+
+            return {
+                "thread_id": conversation_id,
+                "messages": formatted_messages
+            }
+            
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation_history(conversation_id: str):
     """
