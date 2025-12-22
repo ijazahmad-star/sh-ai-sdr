@@ -51,10 +51,14 @@ async def handle_query(request: QueryRequest):
     
     # Get active prompt
     active_prompt_data = get_active_prompt(request.user_id)
-    if not active_prompt_data or "active_prompt" not in active_prompt_data:
-        raise HTTPException(status_code=404, detail="No active prompt found for this user.")
-    
-    system_prompt = active_prompt_data["active_prompt"]["prompt"]
+    if (
+        not active_prompt_data
+        or "active_prompt" not in active_prompt_data
+        or not active_prompt_data["active_prompt"]
+    ):
+        system_prompt = "You are a helpful assistant."
+    else:
+        system_prompt = active_prompt_data["active_prompt"]["prompt"]
 
     use_user_kb = False
     if request.kb_type == "custom":
