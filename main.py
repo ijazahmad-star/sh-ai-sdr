@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from langchain_core.messages import SystemMessage
+import re
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.documents import Document
 from app.config import PDF_DIR
@@ -56,7 +57,7 @@ async def handle_query(request: QueryRequest):
         or "active_prompt" not in active_prompt_data
         or not active_prompt_data["active_prompt"]
     ):
-        system_prompt = "You are a helpful assistant."
+        system_prompt = "You are a helpful assistant. Must call Tools"
     else:
         system_prompt = active_prompt_data["active_prompt"]["prompt"]
 
@@ -105,40 +106,77 @@ async def handle_query(request: QueryRequest):
             "response": final_ai_msg,
             "sources": sources
         }
-from langchain_core.messages import BaseMessage
+
 
 @app.get("/conversations/{conversation_id}")
 async def get_conversation_history(conversation_id: str):
     try:
         config = {"configurable": {"thread_id": conversation_id}}
-        
         with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:
             state = checkpointer.get_tuple(config)
-            
             if not state:
                 return {"messages": []}
 
-            # Get the raw LangChain message objects
             raw_messages = state.checkpoint.get("channel_values", {}).get("messages", [])
-
-            # Format them for the frontend
             formatted_messages = []
+            
+            # Buffer to collect sources from ToolMessages before an AI response
+            current_turn_sources = []
+
             for msg in raw_messages:
-                # Determine role: 'user' for HumanMessage, 'assistant' for AIMessage
-                role = "user" if msg.type == "human" else "assistant"
-                formatted_messages.append({
-                    "id": getattr(msg, 'id', None),
-                    "role": role,
-                    "content": msg.content
-                })
+                # 1. Extract Sources from ToolMessages (Artifacts)
+                if isinstance(msg, ToolMessage):
+                    if hasattr(msg, "artifact") and msg.artifact:
+                        for item in msg.artifact:
+                            # Safely extract metadata and score
+                            metadata = item.get("metadata", {})
+                            current_turn_sources.append({
+                                "source": metadata.get("source", "Unknown"),
+                                "rerank_score": item.get("rerank_score", 0)
+                            })
+                    continue 
+
+                # 2. Process Human and AI Messages
+                if isinstance(msg, (HumanMessage, AIMessage)):
+                    content = msg.content or ""
+                    
+                    # Clean the content: Remove Rerank scores and internal source metadata
+                    # split by "Rerank Score:" and take the first part
+                    clean_text = re.split(r"Rerank Score:", content)[0].strip()
+                    # Remove "Source: { ... }" patterns
+                    clean_text = re.sub(r"Source: \{.*?\}", "", clean_text).strip()
+
+                    # --- KEY UPDATE: Skip empty or whitespace-only messages ---
+                    if not clean_text:
+                        continue
+
+                    # Deduplicate and sort sources for AI messages
+                    sorted_sources = []
+                    if isinstance(msg, AIMessage):
+                        unique_sources = {}
+                        for s in current_turn_sources:
+                            name = s["source"]
+                            # Keep highest score per unique source name
+                            if name not in unique_sources or s["rerank_score"] > unique_sources[name]["rerank_score"]:
+                                unique_sources[name] = s
+                        
+                        sorted_sources = sorted(unique_sources.values(), key=lambda x: x["rerank_score"], reverse=True)
+                        # Reset the buffer after attaching to the AI response
+                        current_turn_sources = []
+
+                    formatted_messages.append({
+                        "role": "user" if isinstance(msg, HumanMessage) else "assistant",
+                        "content": clean_text,
+                        "sources": sorted_sources
+                    })
 
             return {
-                "thread_id": conversation_id,
+                "thread_id": conversation_id, 
                 "messages": formatted_messages
             }
             
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error retrieving history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/conversations/{conversation_id}")
