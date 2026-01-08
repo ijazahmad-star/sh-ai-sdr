@@ -60,7 +60,7 @@ def create_or_load_vectorstore(docs=None, user_id: str = None):
         for chunk in chunks:
             rows_to_insert.append({
                 "content": chunk.page_content,
-                "document_metadata": chunk.metadata,
+                "metadata": chunk.metadata,
                 "embedding": embeddings.embed_documents([chunk.page_content])[0],
                 "user_id": user_id
             })
