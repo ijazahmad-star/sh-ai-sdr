@@ -44,8 +44,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
+# '''
+# Get Answer from user-specific or default DB by AI
+# Fetch active prompt for user
+# If kb_type is "custom", use user-specific KB if exists, else default KB
+# If kb_type is "default", always use default KB
+# '''
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     """Handle user query with user-specific or default KB"""
@@ -107,7 +111,10 @@ async def handle_query(request: QueryRequest):
             "sources": sources
         }
 
-
+# '''
+# Retrieve conversation history from Postgres checkpointer
+# Format messages by cleaning content and attaching sources
+# '''
 @app.get("/conversations/{conversation_id}")
 async def get_conversation_history(conversation_id: str):
     try:
@@ -179,6 +186,9 @@ async def get_conversation_history(conversation_id: str):
         print(f"Error retrieving history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# '''
+# Delete conversation history from Postgres checkpointer
+# '''
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation_history(conversation_id: str):
     """
@@ -193,6 +203,10 @@ async def delete_conversation_history(conversation_id: str):
 
     return {"message": "Conversation history deleted successfully."}
 
+# '''
+# Upload user document, store in Supabase, 
+# process and add to user-specific vectorstore
+# '''
 @app.post("/upload_user_document")
 async def upload_user_document(
     file: UploadFile = File(...),
@@ -237,8 +251,12 @@ async def upload_user_document(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+# '''
+# Get list of user documents from Supabase
+# '''
 @app.get("/get_user_documents/{user_id}")
 def get_user_documents(user_id: str):
+    print(f"Fetching documents for user_id--------->: {user_id}")
     res = supabase.table("user_files").select("*").eq("user_id", user_id).execute()
     return {"documents": res.data}
 
@@ -258,10 +276,13 @@ def download_user_document(file_id: str, user_id: str):
 
     return {"download_url": url["signedUrl"]}
 
-
-
+# '''
+# Delete user document from Supabase and 
+# related entries from vectorstore
+# '''
 @app.delete("/delete_user_document/{file_id}")
 def delete_user_document(file_id: str, user_id: str):
+    print(f"Deleting file -----------> {file_id} for user {user_id}")
     record = supabase.table("user_files").select("*").eq("id", file_id).execute()
 
     if not record.data or len(record.data) == 0:
@@ -277,7 +298,7 @@ def delete_user_document(file_id: str, user_id: str):
 
     # Delete all related chunks in documents table
     supabase.table("documents").delete().match({
-        "document_metadata->>source": file["filename"],
+        "metadata->>source": file["filename"],
         "user_id": user_id
     }).execute()
 
@@ -310,47 +331,11 @@ def delete_user_document(file_id: str, user_id: str):
 #     except Exception as e:
 #         return {"status": "failed", "error": str(e)}
 
-@app.get("/get_user_documents/{user_id}")
-async def get_user_documents(user_id: str):
-    """Get all documents for a specific user"""
-    try:
-        response = supabase.table("documents").select("id, metadata, user_id").eq("user_id", user_id).execute()
-        
-        documents = []
-        for doc in response.data:
-            metadata = doc.get("metadata", {})
-            documents.append({
-                "id": doc["id"],
-                "filename": metadata.get("source", "Unknown"),
-                "metadata": metadata,
-                "createdAt": metadata.get("created_at", None)
-            })
-        
-        return {"documents": documents}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/delete_user_document/{user_id}/{document_id}")
-async def delete_user_document(user_id: str, document_id: str):
-    """Delete a user's document"""
-    try:
-        # Verify document belongs to user
-        check = supabase.table("documents").select("id").eq("id", document_id).eq("user_id", user_id).execute()
-        
-        if not check.data:
-            raise HTTPException(status_code=404, detail="Document not found or doesn't belong to user")
-        
-        # Delete document
-        supabase.table("documents").delete().eq("id", document_id).execute()
-        
-        return {"status": "success", "message": "Document deleted"}
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
+# '''
+# Admin delete user and all its documents 
+# from Supabase and vectorstore
+# '''    
 @app.delete("/admin/delete_user/{target_user_id}")
 def admin_delete_user(target_user_id: str):
     
@@ -380,6 +365,9 @@ def checkAccessToDefault(user_id: str):
     hasAccess = check_user_has_access_to_default(user_id)
     return {"has_access_to_default": hasAccess}
 
+# '''
+# Below all endpoints related to prompts for user
+# '''
 @app.post("/add_prompt")
 def add_prompt_endpoint(request: PromptRequest):
     result = add_prompt(request.name, request.prompt, request.user_id)
