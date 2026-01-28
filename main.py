@@ -55,7 +55,7 @@ app.add_middleware(
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     """Handle user query with user-specific or default KB"""
-    
+    print(f"received model name: {request.model}")
     # Get active prompt
     active_prompt_data = get_active_prompt(request.user_id)
     if (
@@ -75,7 +75,7 @@ async def handle_query(request: QueryRequest):
  
     with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:  
         checkpointer.setup()
-        graph = build_workflow(tools, system_prompt, checkpointer)
+        graph = build_workflow(tools, system_prompt, checkpointer, request.model)
         config = {"configurable": {"thread_id": request.conversation_id}}
         result = graph.invoke({"messages": request.query}, config=config)
         # result = graph.invoke({"messages": messages}, config=config)
@@ -87,7 +87,7 @@ async def handle_query(request: QueryRequest):
             if msg.__class__.__name__ == "AIMessage" and msg.content:
                 final_ai_msg = msg.content
                 final_msg_id = msg.id
-                print("Final AI Message: ", msg.id)
+                # print("Final AI Message: ", msg.id)
         
         sources = []
         if request.kb_type == "custom":
@@ -171,7 +171,7 @@ async def get_conversation_history(conversation_id: str):
                         "content": clean_text,
                         "sources": sorted_sources
                     })
-            print(f"Retrieved {(formatted_messages)}")
+            # print(f"Retrieved {(formatted_messages)}")
             return {
                 "thread_id": conversation_id,
                 "messages": formatted_messages
