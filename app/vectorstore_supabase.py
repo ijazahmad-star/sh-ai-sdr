@@ -112,17 +112,17 @@ def load_vectorstore():
 
 
 def add_prompt(name: str, prompt: str, user_id: str):
-    existing = (
-        supabase.table("prompts")
-        .select("id")
-        .eq("name", name)
-        .eq("user_id", user_id)
-        .execute()
+    # existing = (
+    #     supabase.table("prompts")
+    #     .select("id")
+    #     .eq("name", name)
+    #     .eq("user_id", user_id)
+    #     .execute()
         
-    )
+    # )
 
-    if existing.data:
-        return {"error": f"Prompt '{name}' already exists for this user."}
+    # if existing.data:
+    #     return {"error": f"Prompt '{name}' already exists for this user."}
 
     res = (
         supabase.table("prompts")

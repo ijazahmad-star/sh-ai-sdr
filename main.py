@@ -1,6 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from langchain_core.messages import SystemMessage
+import re
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from fastapi.middleware.cors import CORSMiddleware
+from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from app.config import PDF_DIR
 from app.data_loader import read_uploaded_file, clean_text, clean_metadata
@@ -15,6 +17,7 @@ from app.schema import (
     QueryRequest,
     PromptRequest,
     EditPromptRequest,
+    PromptGenerationRequest,
 )
 
 from app.vectorstore_supabase import (
@@ -43,18 +46,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
+# '''
+# Get Answer from user-specific or default DB by AI
+# Fetch active prompt for user
+# If kb_type is "custom", use user-specific KB if exists, else default KB
+# If kb_type is "default", always use default KB
+# '''
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     """Handle user query with user-specific or default KB"""
-    
+    print(f"received model name: {request.model}")
     # Get active prompt
     active_prompt_data = get_active_prompt(request.user_id)
-    if not active_prompt_data or "active_prompt" not in active_prompt_data:
-        raise HTTPException(status_code=404, detail="No active prompt found for this user.")
-    
-    system_prompt = active_prompt_data["active_prompt"]["prompt"]
+    if (
+        not active_prompt_data
+        or "active_prompt" not in active_prompt_data
+        or not active_prompt_data["active_prompt"]
+    ):
+        system_prompt = "You are a helpful assistant. Must call Tools"
+    else:
+        system_prompt = active_prompt_data["active_prompt"]["prompt"]
 
     use_user_kb = False
     if request.kb_type == "custom":
@@ -64,16 +75,19 @@ async def handle_query(request: QueryRequest):
  
     with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:  
         checkpointer.setup()
-        graph = build_workflow(tools, system_prompt, checkpointer)
+        graph = build_workflow(tools, system_prompt, checkpointer, request.model)
         config = {"configurable": {"thread_id": request.conversation_id}}
         result = graph.invoke({"messages": request.query}, config=config)
         # result = graph.invoke({"messages": messages}, config=config)
         messages = result["messages"]
         
         final_ai_msg = None
+        final_msg_id = None
         for msg in messages:
             if msg.__class__.__name__ == "AIMessage" and msg.content:
                 final_ai_msg = msg.content
+                final_msg_id = msg.id
+                # print("Final AI Message: ", msg.id)
         
         sources = []
         if request.kb_type == "custom":
@@ -99,9 +113,77 @@ async def handle_query(request: QueryRequest):
         
         return {
             "response": final_ai_msg,
-            "sources": sources
+            "sources": sources,
+            "message_id": final_msg_id
         }
-    
+
+# '''
+# Retrieve conversation history from Postgres checkpointer
+# Format messages by cleaning content and attaching sources
+# '''
+@app.get("/conversations/{conversation_id}")
+async def get_conversation_history(conversation_id: str):
+    try:
+        config = {"configurable": {"thread_id": conversation_id}}
+        with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:
+            state = checkpointer.get_tuple(config)
+            if not state:
+                return {"thread_id": conversation_id, "messages": []}
+
+            raw_messages = state.checkpoint.get("channel_values", {}).get("messages", [])
+            formatted_messages = []
+            current_turn_sources = []
+
+            for msg in raw_messages:
+                # --- ToolMessage: collect sources ---
+                if isinstance(msg, ToolMessage):
+                    if hasattr(msg, "artifact") and msg.artifact:
+                        for item in msg.artifact:
+                            metadata = item.get("metadata", {})
+                            current_turn_sources.append({
+                                "source": metadata.get("source", "Unknown"),
+                                "rerank_score": item.get("rerank_score", 0),
+                                "tool_message_id": getattr(msg, "id", None)
+                            })
+                    continue
+
+                # --- HumanMessage or AIMessage ---
+                if isinstance(msg, (HumanMessage, AIMessage)):
+                    content = msg.content or ""
+                    clean_text = re.split(r"Rerank Score:", content)[0].strip()
+                    clean_text = re.sub(r"Source: \{.*?\}", "", clean_text).strip()
+                    if not clean_text:
+                        continue
+
+                    sorted_sources = []
+                    if isinstance(msg, AIMessage):
+                        unique_sources = {}
+                        for s in current_turn_sources:
+                            name = s["source"]
+                            if name not in unique_sources or s["rerank_score"] > unique_sources[name]["rerank_score"]:
+                                unique_sources[name] = s
+                        sorted_sources = sorted(unique_sources.values(), key=lambda x: x["rerank_score"], reverse=True)
+                        current_turn_sources = []
+
+                    formatted_messages.append({
+                        "id": getattr(msg, "id", None),
+                        "role": "user" if isinstance(msg, HumanMessage) else "assistant",
+                        "content": clean_text,
+                        "sources": sorted_sources
+                    })
+            # print(f"Retrieved {(formatted_messages)}")
+            return {
+                "thread_id": conversation_id,
+                "messages": formatted_messages
+            }
+
+    except Exception as e:
+        print(f"Error retrieving history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# '''
+# Delete conversation history from Postgres checkpointer
+# '''
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation_history(conversation_id: str):
     """
@@ -116,6 +198,10 @@ async def delete_conversation_history(conversation_id: str):
 
     return {"message": "Conversation history deleted successfully."}
 
+# '''
+# Upload user document, store in Supabase, 
+# process and add to user-specific vectorstore
+# '''
 @app.post("/upload_user_document")
 async def upload_user_document(
     file: UploadFile = File(...),
@@ -160,8 +246,12 @@ async def upload_user_document(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+# '''
+# Get list of user documents from Supabase
+# '''
 @app.get("/get_user_documents/{user_id}")
 def get_user_documents(user_id: str):
+    print(f"Fetching documents for user_id--------->: {user_id}")
     res = supabase.table("user_files").select("*").eq("user_id", user_id).execute()
     return {"documents": res.data}
 
@@ -181,10 +271,13 @@ def download_user_document(file_id: str, user_id: str):
 
     return {"download_url": url["signedUrl"]}
 
-
-
+# '''
+# Delete user document from Supabase and 
+# related entries from vectorstore
+# '''
 @app.delete("/delete_user_document/{file_id}")
 def delete_user_document(file_id: str, user_id: str):
+    print(f"Deleting file -----------> {file_id} for user {user_id}")
     record = supabase.table("user_files").select("*").eq("id", file_id).execute()
 
     if not record.data or len(record.data) == 0:
@@ -233,47 +326,11 @@ def delete_user_document(file_id: str, user_id: str):
 #     except Exception as e:
 #         return {"status": "failed", "error": str(e)}
 
-@app.get("/get_user_documents/{user_id}")
-async def get_user_documents(user_id: str):
-    """Get all documents for a specific user"""
-    try:
-        response = supabase.table("documents").select("id, metadata, user_id").eq("user_id", user_id).execute()
-        
-        documents = []
-        for doc in response.data:
-            metadata = doc.get("metadata", {})
-            documents.append({
-                "id": doc["id"],
-                "filename": metadata.get("source", "Unknown"),
-                "metadata": metadata,
-                "createdAt": metadata.get("created_at", None)
-            })
-        
-        return {"documents": documents}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/delete_user_document/{user_id}/{document_id}")
-async def delete_user_document(user_id: str, document_id: str):
-    """Delete a user's document"""
-    try:
-        # Verify document belongs to user
-        check = supabase.table("documents").select("id").eq("id", document_id).eq("user_id", user_id).execute()
-        
-        if not check.data:
-            raise HTTPException(status_code=404, detail="Document not found or doesn't belong to user")
-        
-        # Delete document
-        supabase.table("documents").delete().eq("id", document_id).execute()
-        
-        return {"status": "success", "message": "Document deleted"}
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
+# '''
+# Admin delete user and all its documents 
+# from Supabase and vectorstore
+# '''    
 @app.delete("/admin/delete_user/{target_user_id}")
 def admin_delete_user(target_user_id: str):
     
@@ -303,6 +360,9 @@ def checkAccessToDefault(user_id: str):
     hasAccess = check_user_has_access_to_default(user_id)
     return {"has_access_to_default": hasAccess}
 
+# '''
+# Below all endpoints related to prompts for user
+# '''
 @app.post("/add_prompt")
 def add_prompt_endpoint(request: PromptRequest):
     result = add_prompt(request.name, request.prompt, request.user_id)
@@ -327,6 +387,51 @@ def set_active_prompt_endpoint(user_id: str, name: str):
 @app.get("/get_active_prompt/{user_id}")
 def get_active_prompt_endpoint(user_id: str):
     return get_active_prompt(user_id)
+
+# '''
+# Generate a system prompt based on user requirements using AI
+# '''
+@app.post("/generate_prompt")
+def generate_prompt_endpoint(request: PromptGenerationRequest):
+    try:
+        # Initialize the LLM
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+
+        # Create a comprehensive prompt generation system message
+        system_prompt = """You are an expert AI prompt engineer. Your task is to create comprehensive, well-structured system prompts for AI assistants based on user requirements.
+
+Given user requirements, generate a detailed system prompt that includes:
+1. Clear role definition for the AI assistant
+2. Specific behaviors and capabilities
+3. Guidelines for interaction style and tone
+4. Any domain-specific knowledge or constraints
+5. Response formatting preferences if applicable
+
+The generated prompt should be professional, actionable, and optimized for the specific use case described in the requirements.
+
+Structure your response as a complete system prompt that can be directly used by an AI assistant."""
+
+        # Create the user message with requirements
+        user_message = f"Generate a comprehensive system prompt based on these requirements:\n\n{request.requirements}"
+
+        # Generate the prompt using the LLM
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_message)
+        ]
+
+        response = llm.invoke(messages)
+
+        generated_prompt = response.content.strip()
+
+        return {
+            "status": "success",
+            "generated_prompt": generated_prompt,
+            "user_id": request.user_id
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate prompt: {str(e)}")
 
 
 if __name__ == "__main__":

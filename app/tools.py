@@ -27,12 +27,10 @@ def check_user_has_access_to_default(user_id: str)-> bool:
     :return: Description
     :rtype: bool
     """
-    response = supabase.table("kb_access").select("hasAccessToDefaultKB").eq("userId", user_id).execute()
-    if response.data and response.data[0]["hasAccessToDefaultKB"]:
-        print("User has access to the default KB")
+    response = supabase.table("kb_accesses").select("has_access_to_default_kb").eq("user_id", user_id).execute()
+    if response.data and response.data[0]["has_access_to_default_kb"]:
         return True
     else:
-        print("User does not have access to the default KB")
         return False
 
 def get_admin_user_id():

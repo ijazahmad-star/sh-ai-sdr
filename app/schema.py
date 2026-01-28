@@ -9,6 +9,7 @@ class QueryRequest(BaseModel):
     user_id: str
     kb_type: Optional[str] = "default" 
     conversation_id: str
+    model: str 
 
 class PromptRequest(BaseModel):
     name: str
@@ -20,3 +21,7 @@ class EditPromptRequest(BaseModel):
     new_name: str = None
     new_prompt: str = None
     user_id: str
+
+class PromptGenerationRequest(BaseModel):
+    user_id: str
+    requirements: str

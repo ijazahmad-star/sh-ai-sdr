@@ -7,8 +7,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, END
 import os
 
-def build_workflow(tools, system_prompt, checkpointer):
-    model = ChatOpenAI(model="gpt-4o-mini", temperature=0).bind_tools(tools)
+def build_workflow(tools, system_prompt, checkpointer, modal_name: str):
+    model = ChatOpenAI(model=modal_name, temperature=0).bind_tools(tools)
+    print(f"Using model: {modal_name}")
     # api_key = os.getenv("GOOGLE_API_KEY")
     # model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, google_api_key = api_key).bind_tools(tools)
 
