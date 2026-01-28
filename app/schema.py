@@ -9,6 +9,7 @@ class QueryRequest(BaseModel):
     user_id: str
     kb_type: Optional[str] = "default" 
     conversation_id: str
+    model: str 
 
 class PromptRequest(BaseModel):
     name: str
