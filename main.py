@@ -67,6 +67,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
+    # Approximate pricing per 1M tokens
+    pricing = {
+        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+    }
+    
+    # Default to gpt-4o-mini if not found
+    model_key = "gpt-4o" if "gpt-4o" in model_name and "mini" not in model_name else "gpt-4o-mini"
+    cost_config = pricing.get(model_key, pricing["gpt-4o-mini"])
+    
+    input_cost = (input_tokens / 1_000_000) * cost_config["input"]
+    output_cost = (output_tokens / 1_000_000) * cost_config["output"]
+    
+    return input_cost + output_cost
+
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     """Handle user query with user-specific or default KB (Optimized JSON Response)"""
@@ -90,11 +106,27 @@ async def handle_query(request: QueryRequest):
     final_ai_msg = ""
     final_msg_id = None
     sources = []
+    
+    total_input_tokens = 0
+    total_output_tokens = 0
 
     for msg in messages:
-        if msg.__class__.__name__ == "AIMessage" and msg.content:
-            final_ai_msg = msg.content
-            final_msg_id = msg.id
+        if msg.__class__.__name__ == "AIMessage":
+            if msg.content:
+                final_ai_msg = msg.content
+                final_msg_id = msg.id
+            
+            # Extract usage metadata if available (LangChain >= 0.2 format)
+            if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+                total_input_tokens += msg.usage_metadata.get("input_tokens", 0)
+                total_output_tokens += msg.usage_metadata.get("output_tokens", 0)
+                print(f"Total input tokens: {total_input_tokens}, Total output tokens: {total_output_tokens}")
+            # Fallback for some providers/older versions
+            elif "token_usage" in msg.response_metadata:
+                usage = msg.response_metadata["token_usage"]
+                total_input_tokens += usage.get("prompt_tokens", 0)
+                total_output_tokens += usage.get("completion_tokens", 0)
+                print(f"(Callback)Total input tokens: {total_input_tokens}, Total output tokens: {total_output_tokens}")
         elif msg.__class__.__name__ == "ToolMessage" and use_user_kb:
             if hasattr(msg, "artifact") and msg.artifact:
                 for item in msg.artifact:
@@ -103,6 +135,26 @@ async def handle_query(request: QueryRequest):
                         "content": item["page_content"],
                         "rerank_score": item.get("rerank_score")
                     })
+
+    # Log usage to database
+    try:
+        user_res = supabase.table("users").select("name, department, organization").eq("id", request.user_id).single().execute()
+        user_data = user_res.data if user_res.data else {}
+        
+        estimated_cost = calculate_cost(request.model, total_input_tokens, total_output_tokens)
+        
+        supabase.table("user_model_usage").insert({
+            "user_id": request.user_id,
+            "user_name": user_data.get("name"),
+            "department": user_data.get("department"),
+            "organization": user_data.get("organization"),
+            "model_name": request.model,
+            "input_tokens": total_input_tokens,
+            "output_tokens": total_output_tokens,
+            "estimated_cost": estimated_cost
+        }).execute()
+    except Exception as e:
+        print(f"Error logging model usage: {e}")
 
     if sources:
         unique = {s["source"]: s for s in sources}
