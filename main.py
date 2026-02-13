@@ -1,4 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse
+import json
 import re
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,12 +8,15 @@ from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from app.config import PDF_DIR
 from app.data_loader import read_uploaded_file, clean_text, clean_metadata
-from app.tools import create_retriever_tool, check_user_has_documents, check_user_has_access_to_default
+from app.tools.tools import create_retriever_tool, check_user_has_documents, check_user_has_access_to_default
+from app.tools.google_search_tool import search_google_tool
 from app.graph_builder import build_workflow
 import os
 import uvicorn
 import warnings
 import uuid
+import time
+from typing import List, Union
 
 from app.schema import (
     QueryRequest,
@@ -32,11 +37,27 @@ from app.vectorstore_supabase import (
 from app.config import (
     supabase,SUPABASE_DB_URI,
 )
+from langgraph.checkpoint.postgres import PostgresSaver
+import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-from langgraph.checkpoint.postgres import PostgresSaver 
 
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="Strategisthub Email Assistant API")
+# Global checkpointer
+checkpointer = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global checkpointer
+    # Initialize checkpointer
+    async_checkpointer = PostgresSaver.from_conn_string(SUPABASE_DB_URI)
+    with async_checkpointer as cp:
+        checkpointer = cp
+        checkpointer.setup()
+        yield
+    # Connection closes when context manager exits
+
+app = FastAPI(title="Strategisthub Email Assistant API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,81 +67,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# '''
-# Get Answer from user-specific or default DB by AI
-# Fetch active prompt for user
-# If kb_type is "custom", use user-specific KB if exists, else default KB
-# If kb_type is "default", always use default KB
-# '''
 @app.post("/query")
 async def handle_query(request: QueryRequest):
-    """Handle user query with user-specific or default KB"""
-    print(f"received model name: {request.model}")
-    # Get active prompt
+    """Handle user query with user-specific or default KB (Optimized JSON Response)"""
+
     active_prompt_data = get_active_prompt(request.user_id)
-    if (
-        not active_prompt_data
-        or "active_prompt" not in active_prompt_data
-        or not active_prompt_data["active_prompt"]
-    ):
-        system_prompt = "You are a helpful assistant. Must call Tools"
-    else:
-        system_prompt = active_prompt_data["active_prompt"]["prompt"]
+    system_prompt = active_prompt_data.get("active_prompt", {}).get("prompt", "You are a helpful assistant. When using the database tool, retrieve all required information in a single call. Do not call the database tool multiple times. Plan what you need before calling it")
 
-    use_user_kb = False
-    if request.kb_type == "custom":
-        use_user_kb = True
-    
+    use_user_kb = request.kb_type == "custom"
     tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
+    tools.append(search_google_tool())
  
-    with PostgresSaver.from_conn_string(SUPABASE_DB_URI) as checkpointer:  
-        checkpointer.setup()
-        graph = build_workflow(tools, system_prompt, checkpointer, request.model)
-        config = {"configurable": {"thread_id": request.conversation_id}}
-        result = graph.invoke({"messages": request.query}, config=config)
-        # result = graph.invoke({"messages": messages}, config=config)
-        messages = result["messages"]
-        
-        final_ai_msg = None
-        final_msg_id = None
-        for msg in messages:
-            if msg.__class__.__name__ == "AIMessage" and msg.content:
-                final_ai_msg = msg.content
-                final_msg_id = msg.id
-                # print("Final AI Message: ", msg.id)
-        
-        sources = []
-        if request.kb_type == "custom":
-            for msg in messages:
-                if msg.__class__.__name__ == "ToolMessage":
-                    if hasattr(msg, "artifact") and msg.artifact:
-                        for item in msg.artifact:
-                            sources.append({
-                                "source": item["metadata"].get("source"),
-                                "content": item["page_content"],
-                                "rerank_score": item.get("rerank_score")
-                            })
-            
-            # Deduplicate and sort sources
-            unique = {}
-            for s in sources:
-                key = s["source"]
-                if key not in unique:
-                    unique[key] = s
-            
-            sources = list(unique.values())
-            sources = sorted(sources, key=lambda x: x.get("rerank_score", 0), reverse=True)
-        
-        return {
-            "response": final_ai_msg,
-            "sources": sources,
-            "message_id": final_msg_id
-        }
+    graph = build_workflow(tools, system_prompt, checkpointer, request.model)
+    config = {"configurable": {"thread_id": request.conversation_id}}
+    
+    start_time = time.time()
+    result = graph.invoke({"messages": request.query}, config=config)
+    end_time = time.time()
+    print(f"Agent total response invoke time: {end_time - start_time:.2f} seconds")
+    
+    messages = result["messages"]
+    final_ai_msg = ""
+    final_msg_id = None
+    sources = []
 
-# '''
-# Retrieve conversation history from Postgres checkpointer
-# Format messages by cleaning content and attaching sources
-# '''
+    for msg in messages:
+        if msg.__class__.__name__ == "AIMessage" and msg.content:
+            final_ai_msg = msg.content
+            final_msg_id = msg.id
+        elif msg.__class__.__name__ == "ToolMessage" and use_user_kb:
+            if hasattr(msg, "artifact") and msg.artifact:
+                for item in msg.artifact:
+                    sources.append({
+                        "source": item["metadata"].get("source"),
+                        "content": item["page_content"],
+                        "rerank_score": item.get("rerank_score")
+                    })
+
+    if sources:
+        unique = {s["source"]: s for s in sources}
+        sources = sorted(unique.values(), key=lambda x: x.get("rerank_score", 0), reverse=True)
+
+    return {
+        "response": final_ai_msg,
+        "sources": sources,
+        "message_id": final_msg_id
+    }
+
 @app.get("/conversations/{conversation_id}")
 async def get_conversation_history(conversation_id: str):
     try:
@@ -181,9 +174,6 @@ async def get_conversation_history(conversation_id: str):
         print(f"Error retrieving history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# '''
-# Delete conversation history from Postgres checkpointer
-# '''
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation_history(conversation_id: str):
     """
@@ -198,57 +188,74 @@ async def delete_conversation_history(conversation_id: str):
 
     return {"message": "Conversation history deleted successfully."}
 
-# '''
-# Upload user document, store in Supabase, 
-# process and add to user-specific vectorstore
-# '''
+
 @app.post("/upload_user_document")
 async def upload_user_document(
-    file: UploadFile = File(...),
+    file: Union[UploadFile, List[UploadFile]] = File(...),
     user_id: str = Form(...)
 ):
+    successful_uploads = []
+    failed_uploads = []
+    documents = []
+    
     try:
-        content = await file.read()
+        # Handle both single file and multiple files dynamically
+        files_to_process = file if isinstance(file, list) else [file]
+        
+        for current_file in files_to_process:
+            try:
+                content = await current_file.read()
 
-        file_id = str(uuid.uuid4())
-        storage_path = f"{user_id}/{file_id}-{file.filename}"
+                file_id = str(uuid.uuid4())
+                storage_path = f"{user_id}/{file_id}-{current_file.filename}"
 
-        supabase.storage.from_("user_documents").upload(
-            storage_path,
-            content,
-            {"content-type": file.content_type},
-        )
+                supabase.storage.from_("user_documents").upload(
+                    storage_path,
+                    content,
+                    {"content-type": current_file.content_type},
+                )
 
-        supabase.table("user_files").insert({
-            "user_id": user_id,
-            "filename": file.filename,
-            "storage_path": storage_path
-        }).execute()
+                supabase.table("user_files").insert({
+                    "user_id": user_id,
+                    "filename": current_file.filename,
+                    "storage_path": storage_path
+                }).execute()
 
-        temp_path = f"/tmp/{file.filename}"
-        with open(temp_path, "wb") as f:
-            f.write(content)
+                temp_path = f"/tmp/{current_file.filename}"
+                with open(temp_path, "wb") as f:
+                    f.write(content)
 
-        text = read_uploaded_file(temp_path)
-        text = clean_text(text)
+                text = read_uploaded_file(temp_path)
+                text = clean_text(text)
 
-        doc = Document(
-            page_content=text,
-            metadata={"source": file.filename, "user_id": user_id}
-        )
+                doc = Document(
+                    page_content=text,
+                    metadata={"source": current_file.filename, "user_id": user_id}
+                )
+                documents.append(doc)
 
-        create_or_load_vectorstore([doc], user_id=user_id)
+                os.remove(temp_path)
+                successful_uploads.append(current_file.filename)
 
-        os.remove(temp_path)
+            except Exception as file_error:
+                failed_uploads.append({"filename": current_file.filename, "error": str(file_error)})
+                continue
 
-        return {"status": "success", "file": file.filename}
+        # Batch add all documents to vectorstore
+        if documents:
+            create_or_load_vectorstore(documents, user_id=user_id)
+
+        return {
+            "status": "completed",
+            "successful_uploads": successful_uploads,
+            "failed_uploads": failed_uploads,
+            "total_processed": len(successful_uploads),
+            "total_failed": len(failed_uploads)
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-# '''
-# Get list of user documents from Supabase
-# '''
+
 @app.get("/get_user_documents/{user_id}")
 def get_user_documents(user_id: str):
     print(f"Fetching documents for user_id--------->: {user_id}")
@@ -271,10 +278,6 @@ def download_user_document(file_id: str, user_id: str):
 
     return {"download_url": url["signedUrl"]}
 
-# '''
-# Delete user document from Supabase and 
-# related entries from vectorstore
-# '''
 @app.delete("/delete_user_document/{file_id}")
 def delete_user_document(file_id: str, user_id: str):
     print(f"Deleting file -----------> {file_id} for user {user_id}")
@@ -303,34 +306,6 @@ def delete_user_document(file_id: str, user_id: str):
     return {"status": "deleted"}
 
 
-# @app.post("/upload")
-# async def upload_file(file: UploadFile = File(...)):
-#     """Upload document to DEFAULT KB (for admin use)"""
-#     try:
-#         file_content = await file.read()
-#         temp_path = f"/tmp/{file.filename}"
-        
-#         with open(temp_path, "wb") as temp_file:
-#             temp_file.write(file_content)
-        
-#         content = read_uploaded_file(temp_path)
-#         doc = Document(page_content=content, metadata={"source": file.filename})
-        
-#         # Store in default KB (user_id = None)
-#         create_or_load_vectorstore([doc], user_id=None)
-        
-#         os.remove(temp_path)
-        
-#         return {"status": "success", "filename": file.filename}
-    
-#     except Exception as e:
-#         return {"status": "failed", "error": str(e)}
-
-
-# '''
-# Admin delete user and all its documents 
-# from Supabase and vectorstore
-# '''    
 @app.delete("/admin/delete_user/{target_user_id}")
 def admin_delete_user(target_user_id: str):
     
@@ -349,48 +324,6 @@ def admin_delete_user(target_user_id: str):
 
     return {"status": "deleted", "files_deleted": len(files)}
 
-@app.get("/check_user_kb/{user_id}")
-async def check_user_kb(user_id: str):
-    """Check if user has their own KB"""
-    has_kb = check_user_has_documents(user_id)
-    return {"has_personal_kb": has_kb}
-
-@app.get("/check_user_has_access_to_default_kb/{user_id}")
-def checkAccessToDefault(user_id: str):
-    hasAccess = check_user_has_access_to_default(user_id)
-    return {"has_access_to_default": hasAccess}
-
-# '''
-# Below all endpoints related to prompts for user
-# '''
-@app.post("/add_prompt")
-def add_prompt_endpoint(request: PromptRequest):
-    result = add_prompt(request.name, request.prompt, request.user_id)
-    return {"status": "success", "result": result}
-
-@app.get("/get_prompts/{user_id}")
-def get_prompts_endpoint(user_id: str):
-    return get_prompts(user_id)
-
-@app.put("/edit_prompt")
-def edit_prompt_endpoint(request: EditPromptRequest):
-    return edit_prompt(request.old_name, request.new_prompt, request.user_id)
-
-@app.delete("/delete_prompt/{user_id}/{name}")
-def delete_prompt_endpoint(user_id: str, name: str):
-    return delete_prompt(name, user_id)
-
-@app.post("/set_active_prompt/{user_id}/{name}")
-def set_active_prompt_endpoint(user_id: str, name: str):
-    return set_active_prompt(name, user_id)
-
-@app.get("/get_active_prompt/{user_id}")
-def get_active_prompt_endpoint(user_id: str):
-    return get_active_prompt(user_id)
-
-# '''
-# Generate a system prompt based on user requirements using AI
-# '''
 @app.post("/generate_prompt")
 def generate_prompt_endpoint(request: PromptGenerationRequest):
     try:
@@ -400,16 +333,16 @@ def generate_prompt_endpoint(request: PromptGenerationRequest):
         # Create a comprehensive prompt generation system message
         system_prompt = """You are an expert AI prompt engineer. Your task is to create comprehensive, well-structured system prompts for AI assistants based on user requirements.
 
-Given user requirements, generate a detailed system prompt that includes:
-1. Clear role definition for the AI assistant
-2. Specific behaviors and capabilities
-3. Guidelines for interaction style and tone
-4. Any domain-specific knowledge or constraints
-5. Response formatting preferences if applicable
+                    Given user requirements, generate a detailed system prompt that includes:
+                    1. Clear role definition for the AI assistant
+                    2. Specific behaviors and capabilities
+                    3. Guidelines for interaction style and tone
+                    4. Any domain-specific knowledge or constraints
+                    5. Response formatting preferences if applicable
 
-The generated prompt should be professional, actionable, and optimized for the specific use case described in the requirements.
+                    The generated prompt should be professional, actionable, and optimized for the specific use case described in the requirements.
 
-Structure your response as a complete system prompt that can be directly used by an AI assistant."""
+                    Structure your response as a complete system prompt that can be directly used by an AI assistant."""
 
         # Create the user message with requirements
         user_message = f"Generate a comprehensive system prompt based on these requirements:\n\n{request.requirements}"

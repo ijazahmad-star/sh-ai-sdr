@@ -45,7 +45,7 @@ import gradio as gr
 from pathlib import Path
 from app.data_loader import load_pdfs_from_directory
 from app.vectorstore import build_vectorstore
-from app.tools import create_retriever_tool
+from app.tools.tools import create_retriever_tool
 from app.graph_builder import build_workflow
 from app.config import PDF_DIR, EMAIL_SYSTEM_PROMPT
 
