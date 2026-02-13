@@ -111,24 +111,50 @@ alembic stamp head
 sh-smart-ai-assistant/
 ├── app/
 │   ├── __init__.py
-│   ├── config.py
-│   ├── data_loader.py
-│   ├── graph_builder.py
-│   ├── schema.py
-│   ├── tools.py
-|   ├── models.py                   # contain all the tables - for auto generate tables on supabase
-│   ├── ui.py                       # just for testing
-│   ├── vectorstore_supabas.py      # handle supabase db
-│   ├── vectorstore_weaviate.py     # hanlde weaviate db, if you want to switch
-│   ├── vectorstore.py              # handle faiss db
-├── notebooks/
+│   ├── lifespan.py             # Lifespan context manager for app startup/shutdown
+│   ├── models.py               # Database models (legacy, consider migrating to services)
+│   ├── ui.py                   # UI testing utilities
+│   ├── vectorstore.py          # Vectorstore base class (legacy)
+│   ├── vectorstore_weaviate.py # Weaviate vectorstore implementation (legacy)
+│   ├── api/                    # API routes and endpoints
+│   │   ├── __init__.py
+│   │   ├── queries.py          # Query handling endpoint (/query)
+│   │   ├── conversations.py    # Conversation management endpoints
+│   │   ├── documents.py        # Document upload/download endpoints
+│   │   └── prompts.py          # Prompt generation and management endpoints
+│   ├── core/                   # Core configuration and utilities
+│   │   ├── __init__.py
+│   │   └── config.py           # Application configuration and Supabase setup
+│   ├── models/                 # Pydantic models and schemas
+│   │   ├── __init__.py
+│   │   └── schemas.py          # Request/response data models
+│   ├── services/               # Business logic and external integrations
+│   │   ├── __init__.py
+│   │   ├── llm_service.py      # LLM interactions and graph building
+│   │   ├── vectorstore_service.py  # Vectorstore operations and prompt management
+│   │   ├── data_loader_service.py  # Document processing and loading
+│   │   ├── tools_service.py    # Tool definitions and retrieval
+│   │   └── reranked_service.py # Reranking services
+│   └── utils/                  # Helper functions and utilities
+│       ├── __init__.py
+│       └── helpers.py          # Utility functions (e.g., cost calculation)
+├── notebooks/                  # Jupyter notebooks for experimentation
 │   ├── advance-RAG.ipynb
-│   ├──customize_gpt.ipynb
-└── main.py
-├── pyproject.toml          # uv uses pyproject.toml
-├── .env.example
-├── .gitignore
-└── README.md
+│   └── customize_gpt.ipynb
+├── data/                       # Data files and documents
+├── .env                        # Environment variables (local)
+├── .env.example                # Environment variables template
+├── .gitignore                  # Git ignore rules
+├── .python-version             # Python version specification
+├── pyproject.toml              # Project dependencies and configuration
+├── requirements.txt            # Python dependencies
+├── uv.lock                     # uv lock file
+├── main.py                     # Application entry point
+├── test.py                     # Test scripts
+├── test_ui.py                  # UI test scripts
+├── delete_collection.py        # Collection deletion utility
+├── SystemArchitecture.md       # System architecture documentation
+└── README.md                   # This file
 ```
 
 ## Running the Application with uv

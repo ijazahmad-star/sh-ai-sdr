@@ -3,27 +3,7 @@ from supabase import create_client
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from app.config import (supabase, embeddings)
-
-
-def fetch_conversation_messages(conversation_id: str, limit: int = 10):
-    print("fetching current conversations last 10 messages...")
-    try:
-        response = (
-        supabase
-        .table("messages")
-        .select("role, content")
-        .eq("conversationId", conversation_id)
-        .order("createdAt", desc=False)
-        .limit(limit)
-        .execute()
-    )
-    except ValueError as  e:
-        print("Error invalid.. Something", e)
-
-    return [{"role": row["role"], "content": row["content"]} for row in response.data]
-
-
+from app.core.config import (supabase, embeddings)
 
 def clean_metadata(docs):
     cleaned_docs = []
@@ -98,6 +78,7 @@ def get_vectorstore(docs=None):
     )
     print("Supabase vector store loaded successfully.")
     return vectorstore
+
 
 def load_vectorstore():
     table_name = "documents"
@@ -219,3 +200,71 @@ def get_active_prompt(user_id: str):
         return {"error": "No active prompt found."}
 
     return {"active_prompt": res.data[0]}
+
+def log_model_usage(user_id: str, model_name: str, input_tokens: int, output_tokens: int):
+    """Log model usage to the database"""
+    from app.utils.helpers import calculate_cost
+    try:
+        user_res = supabase.table("users").select("name, department, organization").eq("id", user_id).single().execute()
+        user_data = user_res.data if user_res.data else {}
+        
+        estimated_cost = calculate_cost(model_name, input_tokens, output_tokens)
+        
+        supabase.table("user_model_usage").insert({
+            "user_id": user_id,
+            "user_name": user_data.get("name"),
+            "department": user_data.get("department"),
+            "organization": user_data.get("organization"),
+            "model_name": model_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost": estimated_cost
+        }).execute()
+    except Exception as e:
+        print(f"Error logging model usage: {e}")
+
+
+def check_user_has_documents(user_id: str) -> bool:
+    """Check if user has their own KB"""
+    response = supabase.table("documents").select("id").eq("user_id", user_id).limit(1).execute()
+    return len(response.data) > 0
+
+def check_user_has_access_to_default(user_id: str)-> bool:
+    """
+    Docstring for check_user_has_access_to_default
+    
+    :param user_id: Description
+    :type user_id: str
+    :return: Description
+    :rtype: bool
+    """
+    response = supabase.table("kb_accesses").select("has_access_to_default_kb").eq("user_id", user_id).execute()
+    if response.data and response.data[0]["has_access_to_default_kb"]:
+        return True
+    else:
+        return False
+
+def get_admin_user_id():
+    """
+    Docstring for get_admin_user_id
+    """
+    res = supabase.table("users").select("id").eq("role", "admin").single().execute()
+
+    return res.data["id"]
+
+def fetch_conversation_messages(conversation_id: str, limit: int = 10):
+    print("fetching current conversations last 10 messages...")
+    try:
+        response = (
+        supabase
+        .table("messages")
+        .select("role, content")
+        .eq("conversationId", conversation_id)
+        .order("createdAt", desc=False)
+        .limit(limit)
+        .execute()
+    )
+    except ValueError as  e:
+        print("Error invalid.. Something", e)
+
+    return [{"role": row["role"], "content": row["content"]} for row in response.data]
