@@ -1,67 +1,9 @@
 from langchain.tools import tool
-from app.config import (supabase, cross_encoder, embeddings)
+from app.core.config import (supabase, embeddings)
 import time
-
-
-
-def rerank_with_cross_encoder(query, docs):
-    """Re-rank documents using cross-encoder"""
-    start_rerank = time.time()
-    print("Re-Ranking the results...")
-    pairs = [(query, d["page_content"]) for d in docs]
-    scores = cross_encoder.predict(pairs)
-    ranked = [
-        {**doc, "rerank_score": float(score)}
-        for doc, score in zip(docs, scores)
-    ]
-    ranked.sort(key=lambda x: x["rerank_score"], reverse=True)
-    end_rerank = time.time()
-    print(f"Reranking took: {end_rerank - start_rerank:.4f} seconds")
-    return ranked
-
-def rerank_on_similarity(docs):
-    """Re-rank documents using similarity score"""
-    start_rerank = time.time()
-    print("Re-Ranking the results based on similarity...")
-
-    ranked = sorted(
-        docs,
-        key=lambda x: float(x.get("similarity", 0)),
-        reverse=True
-    )
-
-    end_rerank = time.time()
-    print(f"Reranking took: {end_rerank - start_rerank:.4f} seconds")
-    return ranked
-
-def check_user_has_documents(user_id: str) -> bool:
-    """Check if user has their own KB"""
-    response = supabase.table("documents").select("id").eq("user_id", user_id).limit(1).execute()
-    return len(response.data) > 0
-
-def check_user_has_access_to_default(user_id: str)-> bool:
-    """
-    Docstring for check_user_has_access_to_default
-    
-    :param user_id: Description
-    :type user_id: str
-    :return: Description
-    :rtype: bool
-    """
-    response = supabase.table("kb_accesses").select("has_access_to_default_kb").eq("user_id", user_id).execute()
-    if response.data and response.data[0]["has_access_to_default_kb"]:
-        return True
-    else:
-        return False
-
-def get_admin_user_id():
-    """
-    Docstring for get_admin_user_id
-    """
-    res = supabase.table("users").select("id").eq("role", "admin").single().execute()
-
-    return res.data["id"]
-
+from langchain_community.tools import DuckDuckGoSearchRun
+from app.services.vectorstore_service import get_admin_user_id, check_user_has_documents
+from app.services.reranked_service import rerank_with_cross_encoder
 
 def create_retriever_tool(user_id: str = None, force_user_kb: bool = False):
     """
@@ -129,3 +71,9 @@ def create_retriever_tool(user_id: str = None, force_user_kb: bool = False):
         return serialized, top_docs
     
     return [retrieve_documents]
+
+def search_google_tool():    
+    """
+    Create Google Search tool
+    """   
+    return DuckDuckGoSearchRun()
