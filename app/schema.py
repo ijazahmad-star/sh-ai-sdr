@@ -7,7 +7,7 @@ class UploadRequest(BaseModel):
 class QueryRequest(BaseModel):
     query: str
     user_id: str
-    kb_type: Optional[str] = "default" 
+    kb_type: Optional[str] = "custom" 
     conversation_id: str
     model: str 
 

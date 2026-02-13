@@ -1,8 +1,12 @@
 from langchain.tools import tool
 from app.config import (supabase, cross_encoder, embeddings)
+import time
+
+
 
 def rerank_with_cross_encoder(query, docs):
     """Re-rank documents using cross-encoder"""
+    start_rerank = time.time()
     print("Re-Ranking the results...")
     pairs = [(query, d["page_content"]) for d in docs]
     scores = cross_encoder.predict(pairs)
@@ -11,6 +15,23 @@ def rerank_with_cross_encoder(query, docs):
         for doc, score in zip(docs, scores)
     ]
     ranked.sort(key=lambda x: x["rerank_score"], reverse=True)
+    end_rerank = time.time()
+    print(f"Reranking took: {end_rerank - start_rerank:.4f} seconds")
+    return ranked
+
+def rerank_on_similarity(docs):
+    """Re-rank documents using similarity score"""
+    start_rerank = time.time()
+    print("Re-Ranking the results based on similarity...")
+
+    ranked = sorted(
+        docs,
+        key=lambda x: float(x.get("similarity", 0)),
+        reverse=True
+    )
+
+    end_rerank = time.time()
+    print(f"Reranking took: {end_rerank - start_rerank:.4f} seconds")
     return ranked
 
 def check_user_has_documents(user_id: str) -> bool:
@@ -51,7 +72,6 @@ def create_retriever_tool(user_id: str = None, force_user_kb: bool = False):
         force_user_kb: If True, force use of user KB (if available). 
                       If False, use default KB.
     """
-    
     use_user_kb = False
     filter_user_id = None
 
@@ -61,19 +81,17 @@ def create_retriever_tool(user_id: str = None, force_user_kb: bool = False):
     
     if not force_user_kb:
         user_id = get_admin_user_id()
-        print("Admin User Id: ", user_id)
         filter_user_id = user_id
 
-    kb_type = f"user-specific KB (user_id={user_id})" if use_user_kb else f"Admin-specific KB (user_id={filter_user_id})"
-    
-    print(f"Using {kb_type}")
+    # kb_type = f"user-specific KB (user_id={user_id})" if use_user_kb else f"Admin-specific KB (user_id={filter_user_id})"
     
     @tool(response_format="content_and_artifact")
     def retrieve_documents(query: str):
         """Retrieve relevant documents from Supabase vector database based on semantic similarity."""
         query_embedding = embeddings.embed_query(query)
-        print(f"Retrieving from {kb_type}...")
+        # print(f"Retrieving from {kb_type}...")
         
+        start_retrieval = time.time()
         response = supabase.rpc(
             "match_documents",
             {
@@ -82,23 +100,26 @@ def create_retriever_tool(user_id: str = None, force_user_kb: bool = False):
                 "filter_user_id": filter_user_id
             }
         ).execute()
+        end_retrieval = time.time()
+        print(f"Vector retrieval (DB call) took: {end_retrieval - start_retrieval:.4f} seconds")
         
         if not response.data:
             return "No matching documents found.", []
         
-        print(f"Got {len(response.data)} documents from {kb_type}")
+        # print(f"Got {len(response.data)} documents from {kb_type}")
         
-        docs = []
-        for doc in response.data:
-            docs.append({
+        docs = [
+            {
                 "page_content": doc["content"],
                 "metadata": doc["metadata"],
                 "similarity": doc["similarity"]
-            })
+            }
+            for doc in response.data
+        ]
         
         # Rerank and get top 3
         reranked = rerank_with_cross_encoder(query, docs)
-        top_docs = reranked[:3]
+        top_docs = reranked[:2]
         
         serialized = "\n\n".join(
             f"Rerank Score: {d['rerank_score']:.3f}\nSource: {d['metadata']}\nContent: {d['page_content']}"

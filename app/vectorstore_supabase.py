@@ -45,7 +45,7 @@ def create_or_load_vectorstore(docs=None, user_id: str = None):
         # Split documents into chunks
         print("Splitting docs...")
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
+            chunk_size=200,
             chunk_overlap=50
         )
         chunks = text_splitter.split_documents(docs)
@@ -112,17 +112,17 @@ def load_vectorstore():
 
 
 def add_prompt(name: str, prompt: str, user_id: str):
-    # existing = (
-    #     supabase.table("prompts")
-    #     .select("id")
-    #     .eq("name", name)
-    #     .eq("user_id", user_id)
-    #     .execute()
+    existing = (
+        supabase.table("prompts")
+        .select("id")
+        .eq("name", name)
+        .eq("user_id", user_id)
+        .execute()
         
-    # )
+    )
 
-    # if existing.data:
-    #     return {"error": f"Prompt '{name}' already exists for this user."}
+    if existing.data:
+        return {"error": f"Prompt '{name}' already exists for this user."}
 
     res = (
         supabase.table("prompts")
