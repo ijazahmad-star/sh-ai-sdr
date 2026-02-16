@@ -56,7 +56,7 @@ async def handle_query(request: QueryRequest):
             print(f"(Callback)Total input tokens: {total_input_tokens}, Total output tokens: {total_output_tokens}")
 
     # Log usage to database
-    log_model_usage(request.user_id, request.model, total_input_tokens, total_output_tokens)
+    log_model_usage(request.user_id, request.model, total_input_tokens, total_output_tokens, request.query, final_ai_msg)
 
     # Collect sources from ToolMessages
     for msg in messages:
