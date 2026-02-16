@@ -201,7 +201,7 @@ def get_active_prompt(user_id: str):
 
     return {"active_prompt": res.data[0]}
 
-def log_model_usage(user_id: str, model_name: str, input_tokens: int, output_tokens: int):
+def log_model_usage(user_id: str, model_name: str, input_tokens: int, output_tokens: int, query: str = None, ai_response: str = None):
     """Log model usage to the database"""
     from app.utils.helpers import calculate_cost
     try:
@@ -218,7 +218,9 @@ def log_model_usage(user_id: str, model_name: str, input_tokens: int, output_tok
             "model_name": model_name,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "estimated_cost": estimated_cost
+            "estimated_cost": estimated_cost,
+            "user_query": query,
+            "ai_response": ai_response
         }).execute()
     except Exception as e:
         print(f"Error logging model usage: {e}")
