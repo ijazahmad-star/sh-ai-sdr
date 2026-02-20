@@ -27,6 +27,11 @@ async def handle_query(request: QueryRequest):
     from app.api.queries import handle_query as query_handler
     return await query_handler(request)
 
+@app.post("/query/stream")
+async def handle_query_stream(request: QueryRequest):
+    from app.api.queries import handle_query_stream as query_stream_handler
+    return await query_stream_handler(request)
+
 @app.get("/conversations/{conversation_id}")
 async def get_conversation_history(conversation_id: str):
     from app.api.conversations import get_conversation_history as get_history
