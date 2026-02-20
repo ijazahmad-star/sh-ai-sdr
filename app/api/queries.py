@@ -101,113 +101,329 @@ async def handle_query(request: QueryRequest):
         "message_id": final_msg_id
     }
 
-# Assumes QueryRequest has attributes: user_id, conversation_id, kb_type, model, query
-# and that build_workflow, get_active_prompt, create_retriever_tool, search_google_tool,
-# checkpointer, log_model_usage are available in the module scope.
+# # Assumes QueryRequest has attributes: user_id, conversation_id, kb_type, model, query
+# # and that build_workflow, get_active_prompt, create_retriever_tool, search_google_tool,
+# # checkpointer, log_model_usage are available in the module scope.
 
-# Persist helper - run safely in background or awaited
-async def _persist_state(graph, config, content, message_id=None):
+# # Persist helper - run safely in background or awaited
+# async def _persist_state(graph, config, content, message_id=None):
+#     try:
+#         # We shield the update_state call so that if the client cancels the request,
+#         # the background database write (which takes some time) doesn't get 
+#         # killed mid-transaction.
+#         print(f"Starting shielded persist for {message_id}...")
+#         await asyncio.shield(
+#             graph.aupdate_state(
+#                 config,
+#                 {"messages": [AIMessage(content=content, id=message_id)]}
+#             )
+#         )
+#         print(f"Persist finished for {message_id}")
+#     except Exception as e:
+#         # Log but do not raise so streaming is not interrupted
+#         print(f"Persist error: {e}")
+
+# async def handle_query_stream(request: QueryRequest):
+#     """Handle user query with streaming response, periodic partial persists, and final persist."""
+
+#     # Configuration for periodic persists
+#     FLUSH_CHAR_THRESHOLD = 512        # persist after ~512 characters accumulated
+#     FLUSH_TIME_SECONDS = 3.0         # OR persist at least every 3 seconds
+
+#     async def event_generator():
+#         try:
+#             # 1. Setup Graph and Context
+#             active_prompt_data = get_active_prompt(request.user_id)
+#             system_prompt = active_prompt_data.get("active_prompt", {}).get("prompt", "You are a helpful assistant.")
+
+#             use_user_kb = request.kb_type == "custom"
+#             tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
+#             tools.append(search_google_tool())
+
+#             # Build the workflow (graph) and thread config
+#             graph = build_workflow(tools, system_prompt, checkpointer, request.model)
+#             config = {"configurable": {"thread_id": request.conversation_id}}
+
+#             # Tracking variables
+#             accumulated_response = ""
+#             final_msg_id = "lc_run--" + str(uuid.uuid4())
+#             # final_msg_id = None
+#             sources = []
+#             total_input_tokens = 0
+#             total_output_tokens = 0
+
+#             # Persist debounce state
+#             chars_since_flush = 0
+#             last_flush_time = time.time()
+#             # Track background persist task to avoid unbounded concurrency
+#             background_persist_task = None
+
+#             # 2. Use astream_events for token-level streaming
+#             async for event in graph.astream_events(
+#                 {"messages": [HumanMessage(content=request.query)]},
+#                 config=config,
+#                 version="v2"
+#             ):
+#                 kind = event.get("event")
+
+#                 # Stream LLM tokens as they arrive
+#                 if kind == "on_chat_model_stream":
+#                     chunk_data = event.get("data", {})
+#                     chunk_content = chunk_data.get("chunk", {})
+
+#                     if hasattr(chunk_content, "content") and chunk_content.content:
+#                         content_chunk = chunk_content.content
+#                         accumulated_response += content_chunk
+#                         chars_since_flush += len(content_chunk)
+
+#                         # Yield token chunk to client immediately
+#                         yield f"data: {json.dumps({'type': 'content', 'data': content_chunk})}\n\n"
+
+#                         # Decide whether to flush partial persist:
+#                         now = time.time()
+#                         if chars_since_flush >= FLUSH_CHAR_THRESHOLD or (now - last_flush_time) >= FLUSH_TIME_SECONDS:
+#                             chars_since_flush = 0
+#                             last_flush_time = now
+
+#                             # If there is an outstanding background persist, don't spawn another; let it finish.
+#                             if background_persist_task and not background_persist_task.done():
+#                                 # Optionally cancel and replace if you want newer-only writes:
+#                                 # background_persist_task.cancel()
+#                                 pass
+
+#                             # Launch a background persist (non-blocking)
+#                             background_persist_task = asyncio.create_task(
+#                                 _persist_state(graph, config, accumulated_response, message_id=final_msg_id)
+#                             )
+
+#                 # Capture final message ID and metadata
+#                 elif kind == "on_chat_model_end":
+#                     output = event.get("data", {}).get("output", {})
+#                     if hasattr(output, "id"):
+#                         final_msg_id = output.id
+
+#                     # Track token usage
+#                     if hasattr(output, "usage_metadata") and output.usage_metadata:
+#                         total_input_tokens = output.usage_metadata.get("input_tokens", 0)
+#                         total_output_tokens = output.usage_metadata.get("output_tokens", 0)
+
+#                 # Capture tool call results (sources)
+#                 elif kind == "on_tool_end" and use_user_kb:
+#                     output = event.get("data", {}).get("output", {})
+#                     if hasattr(output, "artifact") and output.artifact:
+#                         for item in output.artifact:
+#                             sources.append({
+#                                 "source": item["metadata"].get("source", "Unknown"),
+#                                 "content": item.get("page_content", ""),
+#                                 "rerank_score": item.get("rerank_score", 0)
+#                             })
+
+#                 # Optionally handle other event kinds (errors, interrupts) here
+
+#             # 3. Post-stream processing: ensure any background persist finished and persist final response
+#             # Wait for the last background persist to finish (if any)
+#             if background_persist_task:
+#                 with contextlib.suppress(asyncio.CancelledError):
+#                     await background_persist_task
+
+#             # Persist the final accumulated response (await to ensure durable write)
+#             if accumulated_response:
+#                 try:
+#                     await _persist_state(graph, config, accumulated_response, message_id=final_msg_id)
+#                 except Exception as persist_err:
+#                     print(f"Final persist error: {persist_err}")
+
+#             # Deduplicate and sort sources (if any)
+#             if sources:
+#                 unique_sources = {s["source"]: s for s in sources}.values()
+#                 sources = sorted(unique_sources, key=lambda x: x.get("rerank_score", 0), reverse=True)
+
+#             # Log final stats
+#             log_model_usage(
+#                 request.user_id,
+#                 request.model,
+#                 total_input_tokens,
+#                 total_output_tokens,
+#                 request.query,
+#                 accumulated_response
+#             )
+
+#             # Send final done event with message id and sources
+#             yield f"data: {json.dumps({'type': 'done', 'message_id': final_msg_id, 'sources': sources})}\n\n"
+
+#         except asyncio.CancelledError:
+#             # Client cancelled (disconnect)
+#             print("Stream cancelled by client (CancelledError path)")
+#             if accumulated_response:
+#                 # Shielding is already handled inside _persist_state
+#                 try:
+#                     print(f"Saving partial response on cancellation ({len(accumulated_response)} chars)")
+#                     await _persist_state(graph, config, accumulated_response, message_id=final_msg_id)
+#                 except Exception as update_err:
+#                     print(f"Error updating state on cancellation: {update_err}")
+
+#                 # Log usage to database
+#                 log_model_usage(
+#                     request.user_id,
+#                     request.model,
+#                     total_input_tokens,
+#                     total_output_tokens,
+#                     request.query,
+#                     accumulated_response
+#                 )
+
+#             yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
+
+#         except Exception as e:
+#             print(f"Error in stream: {str(e)}")
+#             traceback.print_exc()
+#             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+#     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+import asyncio
+import contextlib
+import json
+import time
+import traceback
+import uuid
+
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import HumanMessage, AIMessage
+
+from app.services.partial_store import save_partial, delete_partial, get_partial
+
+
+
+# ---------------------------------------------------------------------------
+# Final persist helper
+# ---------------------------------------------------------------------------
+async def _persist_final(graph, config, content: str, message_id: str):
     try:
-        # We shield the update_state call so that if the client cancels the request,
-        # the background database write (which takes some time) doesn't get 
-        # killed mid-transaction.
-        print(f"Starting shielded persist for {message_id}...")
+        print(f"[persist] Writing final message {message_id} ({len(content)} chars)...")
         await asyncio.shield(
             graph.aupdate_state(
                 config,
                 {"messages": [AIMessage(content=content, id=message_id)]}
             )
         )
-        print(f"Persist finished for {message_id}")
+        print(f"[persist] Done for {message_id}")
     except Exception as e:
-        # Log but do not raise so streaming is not interrupted
-        print(f"Persist error: {e}")
+        print(f"[persist] Error: {e}")
+        raise
 
+
+# ---------------------------------------------------------------------------
+# Restore any saved partial from a previous cancelled stream
+# ---------------------------------------------------------------------------
+async def _restore_partial_if_exists(graph, config, conversation_id: str):
+    """
+    If the previous stream was cancelled, a partial response was saved
+    to the in-memory store. Restore it to LangGraph before the next turn.
+    """
+    partial = await get_partial(conversation_id)
+    if partial:
+        print(f"[restore] Found partial response for {conversation_id}, restoring...")
+        try:
+            restore_id = "lc_run--" + str(uuid.uuid4())
+            await graph.aupdate_state(
+                config,
+                {"messages": [AIMessage(content=partial, id=restore_id)]}
+            )
+            await delete_partial(conversation_id)
+            print(f"[restore] Partial restored successfully")
+        except Exception as e:
+            print(f"[restore] Failed to restore partial: {e}")
+            await delete_partial(conversation_id)  # clear it anyway to avoid loop
+
+
+# ---------------------------------------------------------------------------
+# Main streaming handler
+# ---------------------------------------------------------------------------
 async def handle_query_stream(request: QueryRequest):
-    """Handle user query with streaming response, periodic partial persists, and final persist."""
-
-    # Configuration for periodic persists
-    FLUSH_CHAR_THRESHOLD = 512        # persist after ~512 characters accumulated
-    FLUSH_TIME_SECONDS = 3.0         # OR persist at least every 3 seconds
+    PARTIAL_CHAR_THRESHOLD = 512
+    PARTIAL_TIME_THRESHOLD = 3.0
 
     async def event_generator():
+        accumulated_response = ""
+        final_msg_id = "lc_run--" + str(uuid.uuid4())
+        sources = []
+        total_input_tokens = 0
+        total_output_tokens = 0
+        graph = None
+        config = None
+
         try:
-            # 1. Setup Graph and Context
+            # ------------------------------------------------------------------
+            # 1. Setup
+            # ------------------------------------------------------------------
             active_prompt_data = get_active_prompt(request.user_id)
-            system_prompt = active_prompt_data.get("active_prompt", {}).get("prompt", "You are a helpful assistant.")
+            system_prompt = (
+                active_prompt_data
+                .get("active_prompt", {})
+                .get("prompt", "You are a helpful assistant.")
+            )
 
             use_user_kb = request.kb_type == "custom"
             tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
             tools.append(search_google_tool())
 
-            # Build the workflow (graph) and thread config
             graph = build_workflow(tools, system_prompt, checkpointer, request.model)
             config = {"configurable": {"thread_id": request.conversation_id}}
 
-            # Tracking variables
-            accumulated_response = ""
-            final_msg_id = "lc_run--" + str(uuid.uuid4())
-            # final_msg_id = None
-            sources = []
-            total_input_tokens = 0
-            total_output_tokens = 0
+            # ------------------------------------------------------------------
+            # 2. Restore partial from previous cancelled stream (if any)
+            #    This runs BEFORE the new HumanMessage is added, so the
+            #    partial AIMessage gets inserted cleanly into history first.
+            # ------------------------------------------------------------------
+            await _restore_partial_if_exists(graph, config, request.conversation_id)
 
-            # Persist debounce state
-            chars_since_flush = 0
-            last_flush_time = time.time()
-            # Track background persist task to avoid unbounded concurrency
-            background_persist_task = None
+            chars_since_partial = 0
+            last_partial_time = time.time()
+            partial_save_task: asyncio.Task | None = None
 
-            # 2. Use astream_events for token-level streaming
+            # ------------------------------------------------------------------
+            # 3. Stream events
+            # ------------------------------------------------------------------
             async for event in graph.astream_events(
                 {"messages": [HumanMessage(content=request.query)]},
                 config=config,
-                version="v2"
+                version="v2",
             ):
                 kind = event.get("event")
 
-                # Stream LLM tokens as they arrive
                 if kind == "on_chat_model_stream":
-                    chunk_data = event.get("data", {})
-                    chunk_content = chunk_data.get("chunk", {})
+                    chunk = event.get("data", {}).get("chunk", {})
+                    if hasattr(chunk, "content") and chunk.content:
+                        token = chunk.content
+                        accumulated_response += token
+                        chars_since_partial += len(token)
 
-                    if hasattr(chunk_content, "content") and chunk_content.content:
-                        content_chunk = chunk_content.content
-                        accumulated_response += content_chunk
-                        chars_since_flush += len(content_chunk)
+                        yield f"data: {json.dumps({'type': 'content', 'data': token})}\n\n"
 
-                        # Yield token chunk to client immediately
-                        yield f"data: {json.dumps({'type': 'content', 'data': content_chunk})}\n\n"
-
-                        # Decide whether to flush partial persist:
                         now = time.time()
-                        if chars_since_flush >= FLUSH_CHAR_THRESHOLD or (now - last_flush_time) >= FLUSH_TIME_SECONDS:
-                            chars_since_flush = 0
-                            last_flush_time = now
+                        should_flush = (
+                            chars_since_partial >= PARTIAL_CHAR_THRESHOLD
+                            or (now - last_partial_time) >= PARTIAL_TIME_THRESHOLD
+                        )
+                        if should_flush:
+                            chars_since_partial = 0
+                            last_partial_time = now
+                            if partial_save_task is None or partial_save_task.done():
+                                snapshot = accumulated_response
+                                partial_save_task = asyncio.create_task(
+                                    save_partial(request.conversation_id, snapshot)
+                                )
 
-                            # If there is an outstanding background persist, don't spawn another; let it finish.
-                            if background_persist_task and not background_persist_task.done():
-                                # Optionally cancel and replace if you want newer-only writes:
-                                # background_persist_task.cancel()
-                                pass
-
-                            # Launch a background persist (non-blocking)
-                            background_persist_task = asyncio.create_task(
-                                _persist_state(graph, config, accumulated_response, message_id=final_msg_id)
-                            )
-
-                # Capture final message ID and metadata
                 elif kind == "on_chat_model_end":
                     output = event.get("data", {}).get("output", {})
-                    if hasattr(output, "id"):
+                    if hasattr(output, "id") and output.id:
                         final_msg_id = output.id
-
-                    # Track token usage
                     if hasattr(output, "usage_metadata") and output.usage_metadata:
                         total_input_tokens = output.usage_metadata.get("input_tokens", 0)
                         total_output_tokens = output.usage_metadata.get("output_tokens", 0)
 
-                # Capture tool call results (sources)
                 elif kind == "on_tool_end" and use_user_kb:
                     output = event.get("data", {}).get("output", {})
                     if hasattr(output, "artifact") and output.artifact:
@@ -215,67 +431,81 @@ async def handle_query_stream(request: QueryRequest):
                             sources.append({
                                 "source": item["metadata"].get("source", "Unknown"),
                                 "content": item.get("page_content", ""),
-                                "rerank_score": item.get("rerank_score", 0)
+                                "rerank_score": item.get("rerank_score", 0),
                             })
 
-                # Optionally handle other event kinds (errors, interrupts) here
-
-            # 3. Post-stream processing: ensure any background persist finished and persist final response
-            # Wait for the last background persist to finish (if any)
-            if background_persist_task:
+            # ------------------------------------------------------------------
+            # 4. Wait for any in-flight partial save to finish
+            # ------------------------------------------------------------------
+            if partial_save_task and not partial_save_task.done():
                 with contextlib.suppress(asyncio.CancelledError):
-                    await background_persist_task
+                    await partial_save_task
 
-            # Persist the final accumulated response (await to ensure durable write)
-            if accumulated_response:
-                try:
-                    await _persist_state(graph, config, accumulated_response, message_id=final_msg_id)
-                except Exception as persist_err:
-                    print(f"Final persist error: {persist_err}")
+            # ------------------------------------------------------------------
+            # 5. Persist FINAL complete message to LangGraph checkpointer (once)
+            # ------------------------------------------------------------------
+            if accumulated_response and graph and config:
+                await _persist_final(graph, config, accumulated_response, final_msg_id)
 
-            # Deduplicate and sort sources (if any)
+            # ------------------------------------------------------------------
+            # 6. Clean up partial store (stream completed successfully)
+            # ------------------------------------------------------------------
+            await delete_partial(request.conversation_id)
+
+            # ------------------------------------------------------------------
+            # 7. Deduplicate & sort sources
+            # ------------------------------------------------------------------
             if sources:
-                unique_sources = {s["source"]: s for s in sources}.values()
-                sources = sorted(unique_sources, key=lambda x: x.get("rerank_score", 0), reverse=True)
+                unique = {s["source"]: s for s in sources}
+                sources = sorted(unique.values(), key=lambda x: x.get("rerank_score", 0), reverse=True)
 
-            # Log final stats
+            # ------------------------------------------------------------------
+            # 8. Log usage
+            # ------------------------------------------------------------------
             log_model_usage(
                 request.user_id,
                 request.model,
                 total_input_tokens,
                 total_output_tokens,
                 request.query,
-                accumulated_response
+                accumulated_response,
             )
 
-            # Send final done event with message id and sources
+            # ------------------------------------------------------------------
+            # 9. Send done event
+            # ------------------------------------------------------------------
             yield f"data: {json.dumps({'type': 'done', 'message_id': final_msg_id, 'sources': sources})}\n\n"
 
+        # ----------------------------------------------------------------------
+        # Client disconnected mid-stream
+        # DO NOT touch graph/DB — psycopg connection may be broken.
+        # Save partial to in-memory store; it will be restored on next request.
+        # ----------------------------------------------------------------------
         except asyncio.CancelledError:
-            # Client cancelled (disconnect)
-            print("Stream cancelled by client (CancelledError path)")
-            if accumulated_response:
-                # Shielding is already handled inside _persist_state
-                try:
-                    print(f"Saving partial response on cancellation ({len(accumulated_response)} chars)")
-                    await _persist_state(graph, config, accumulated_response, message_id=final_msg_id)
-                except Exception as update_err:
-                    print(f"Error updating state on cancellation: {update_err}")
+            print("[stream] Client disconnected (CancelledError)")
 
-                # Log usage to database
+            # Save whatever we have to in-memory store (no DB call)
+            # This will be restored to LangGraph at the start of the next request
+            if accumulated_response:
+                await save_partial(request.conversation_id, accumulated_response)
+                print(f"[cancel] Saved {len(accumulated_response)} chars to partial store")
+
                 log_model_usage(
                     request.user_id,
                     request.model,
                     total_input_tokens,
                     total_output_tokens,
                     request.query,
-                    accumulated_response
+                    accumulated_response,
                 )
 
             yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
 
+        # ----------------------------------------------------------------------
+        # Any other unexpected error
+        # ----------------------------------------------------------------------
         except Exception as e:
-            print(f"Error in stream: {str(e)}")
+            print(f"[stream] Error: {e}")
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 

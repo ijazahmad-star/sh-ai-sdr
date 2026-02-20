@@ -6,134 +6,20 @@ import time
 from typing import Annotated
 import operator
 
-# def build_workflow(tools, system_prompt, checkpointer, model_name: str):
-#     model = ChatOpenAI(
-#         model=model_name,
-#         temperature=0
-#     ).bind_tools(tools)
-
-#     tool_node = ToolNode(tools)
-
-#     def agent(state: MessagesState):
-#         messages = [SystemMessage(content=system_prompt)] + state["messages"]
-#         # start_time = time.time()
-#         response = model.invoke(messages)
-#         # end_time = time.time()
-#         # print(f"Agent total response time: {end_time - start_time:.2f} seconds")    
-#         return {"messages": [response]}
-
-#     def should_continue(state: MessagesState):
-#         last = state["messages"][-1]
-#         if not last.tool_calls:
-#             return END
-#         return "tools"
-
-#     workflow = StateGraph(MessagesState)
-
-#     workflow.add_node("agent", agent)
-#     workflow.add_node("tools", tool_node)
-
-#     workflow.add_edge(START, "agent")
-#     workflow.add_conditional_edges("agent", should_continue)
-#     workflow.add_edge("tools", "agent")
-
-
-#     # start_compile = time.time()
-#     app = workflow.compile(checkpointer=checkpointer)
-#     # end_compile = time.time()
-#     # print(f"Graph compilation took: {end_compile - start_compile:.4f} seconds")
-#     return app
-
-
 def build_workflow(tools, system_prompt, checkpointer, model_name: str):
     model = ChatOpenAI(
         model=model_name,
         temperature=0
     ).bind_tools(tools)
 
-    # Parallel tool execution
-    def parallel_tool_node(state: MessagesState):
-        """Execute all tool calls in parallel"""
-        last_message = state["messages"][-1]
-        
-        if not last_message.tool_calls:
-            return {"messages": []}
-        
-        # Create tasks for all tool calls
-        tool_results = []
-        
-        # Execute all tools in parallel
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(last_message.tool_calls)) as executor:
-            futures = {}
-            for tool_call in last_message.tool_calls:
-                tool_name = tool_call["name"]
-                tool_input = tool_call["args"]
-                tool = next((t for t in tools if t.name == tool_name), None)
-                if tool:
-                    futures[executor.submit(tool.run, tool_input)] = tool_call
-            
-            # Collect results
-            for future in concurrent.futures.as_completed(futures):
-                tool_call = futures[future]
-                try:
-                    result = future.result()
-                    tool_results.append(
-                        ToolMessage(
-                            content=result,
-                            tool_call_id=tool_call["id"],
-                            name=tool_call["name"]
-                        )
-                    )
-                except Exception as e:
-                    tool_results.append(
-                        ToolMessage(
-                            content=f"Error: {str(e)}",
-                            tool_call_id=tool_call["id"],
-                            name=tool_call["name"]
-                        )
-                    )
-        
-        return {"messages": tool_results}
+    tool_node = ToolNode(tools)
 
     def agent(state: MessagesState):
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
-        
-        # Safety check: ensure no incomplete tool calls before invoking LLM
-        # If the last message has tool_calls but no following ToolMessages, add placeholder responses
-        if len(messages) >= 2:
-            for i in range(len(messages) - 1):
-                msg = messages[i]
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    # Check if each tool_call has a corresponding ToolMessage
-                    tool_call_ids = {tc["id"] for tc in msg.tool_calls}
-                    # Look ahead for ToolMessages
-                    responded_ids = set()
-                    for j in range(i + 1, len(messages)):
-                        if isinstance(messages[j], ToolMessage):
-                            responded_ids.add(messages[j].tool_call_id)
-                        elif not isinstance(messages[j], ToolMessage):
-                            # Stop checking once we hit a non-ToolMessage
-                            break
-                    
-                    # Add placeholder for missing responses
-                    missing_ids = tool_call_ids - responded_ids
-                    if missing_ids:
-                        print(f"Found {len(missing_ids)} incomplete tool calls - adding placeholders")
-                        placeholder_messages = []
-                        for tc in msg.tool_calls:
-                            if tc["id"] in missing_ids:
-                                placeholder_messages.append(
-                                    ToolMessage(
-                                        content="[Request was cancelled]",
-                                        tool_call_id=tc["id"],
-                                        name=tc.get("name", "unknown")
-                                    )
-                                )
-                        # Insert placeholders right after the message with tool_calls
-                        messages = messages[:i+1] + placeholder_messages + messages[i+1:]
-        
+        # start_time = time.time()
         response = model.invoke(messages)
+        # end_time = time.time()
+        # print(f"Agent total response time: {end_time - start_time:.2f} seconds")    
         return {"messages": [response]}
 
     def should_continue(state: MessagesState):
@@ -143,15 +29,95 @@ def build_workflow(tools, system_prompt, checkpointer, model_name: str):
         return "tools"
 
     workflow = StateGraph(MessagesState)
+
     workflow.add_node("agent", agent)
-    workflow.add_node("tools", parallel_tool_node)
+    workflow.add_node("tools", tool_node)
 
     workflow.add_edge(START, "agent")
     workflow.add_conditional_edges("agent", should_continue)
     workflow.add_edge("tools", "agent")
 
+
+    # start_compile = time.time()
     app = workflow.compile(checkpointer=checkpointer)
+    # end_compile = time.time()
+    # print(f"Graph compilation took: {end_compile - start_compile:.4f} seconds")
     return app
+
+
+# def build_workflow(tools, system_prompt, checkpointer, model_name: str):
+#     model = ChatOpenAI(
+#         model=model_name,
+#         temperature=0
+#     ).bind_tools(tools)
+
+#     # Parallel tool execution
+#     def parallel_tool_node(state: MessagesState):
+#         """Execute all tool calls in parallel"""
+#         last_message = state["messages"][-1]
+        
+#         if not last_message.tool_calls:
+#             return {"messages": []}
+        
+#         # Create tasks for all tool calls
+#         tool_results = []
+        
+#         # Execute all tools in parallel
+#         import concurrent.futures
+#         with concurrent.futures.ThreadPoolExecutor(max_workers=len(last_message.tool_calls)) as executor:
+#             futures = {}
+#             for tool_call in last_message.tool_calls:
+#                 tool_name = tool_call["name"]
+#                 tool_input = tool_call["args"]
+#                 tool = next((t for t in tools if t.name == tool_name), None)
+#                 if tool:
+#                     futures[executor.submit(tool.run, tool_input)] = tool_call
+            
+#             # Collect results
+#             for future in concurrent.futures.as_completed(futures):
+#                 tool_call = futures[future]
+#                 try:
+#                     result = future.result()
+#                     tool_results.append(
+#                         ToolMessage(
+#                             content=result,
+#                             tool_call_id=tool_call["id"],
+#                             name=tool_call["name"]
+#                         )
+#                     )
+#                 except Exception as e:
+#                     tool_results.append(
+#                         ToolMessage(
+#                             content=f"Error: {str(e)}",
+#                             tool_call_id=tool_call["id"],
+#                             name=tool_call["name"]
+#                         )
+#                     )
+        
+#         return {"messages": tool_results}
+
+#     def agent(state: MessagesState):
+#         messages = [SystemMessage(content=system_prompt)] + state["messages"]
+        
+#         response = model.invoke(messages)
+#         return {"messages": [response]}
+
+#     def should_continue(state: MessagesState):
+#         last = state["messages"][-1]
+#         if not last.tool_calls:
+#             return END
+#         return "tools"
+
+#     workflow = StateGraph(MessagesState)
+#     workflow.add_node("agent", agent)
+#     workflow.add_node("tools", parallel_tool_node)
+
+#     workflow.add_edge(START, "agent")
+#     workflow.add_conditional_edges("agent", should_continue)
+#     workflow.add_edge("tools", "agent")
+
+#     app = workflow.compile(checkpointer=checkpointer)
+#     return app
 
 
 

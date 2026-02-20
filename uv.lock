@@ -450,6 +450,7 @@ dependencies = [
     { name = "pypdf" },
     { name = "pypdf2" },
     { name = "python-dotenv" },
+    { name = "redis" },
     { name = "sentence-transformers" },
     { name = "sqlmodel" },
     { name = "supabase" },
@@ -475,6 +476,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=4.0.0" },
     { name = "pypdf2", specifier = ">=3.0.1" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "redis", specifier = ">=7.2.0" },
     { name = "sentence-transformers", specifier = ">=5.1.2" },
     { name = "sqlmodel", specifier = ">=0.0.27" },
     { name = "supabase", specifier = ">=2.22.3" },
@@ -2316,6 +2318,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/fb/55/e6c2c181e63916e0d7a32383edfaef1767e4a39ece99bf89ef8ea5c52de3/realtime-2.22.3.tar.gz", hash = "sha256:848fd177f83679e498a1200f454aa747ff5d07cad31022d917a57da3f945e5af", size = 18531, upload-time = "2025-10-28T20:42:19.952Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/42/69/958578e22b50e02679404c231a3268a5acbf999d3855d093efb7a0787170/realtime-2.22.3-py3-none-any.whl", hash = "sha256:7b606e48a79b5c1f3e4291b41c93da56c0273c3ee8ff5f5c25f3ae098280a8d8", size = 22128, upload-time = "2025-10-28T20:42:18.903Z" },
+]
+
+[[package]]
+name = "redis"
+version = "7.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/32/6fac13a11e73e1bc67a2ae821a72bfe4c2d8c4c48f0267e4a952be0f1bae/redis-7.2.0.tar.gz", hash = "sha256:4dd5bf4bd4ae80510267f14185a15cba2a38666b941aff68cccf0256b51c1f26", size = 4901247, upload-time = "2026-02-16T17:16:22.797Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/86/cf/f6180b67f99688d83e15c84c5beda831d1d341e95872d224f87ccafafe61/redis-7.2.0-py3-none-any.whl", hash = "sha256:01f591f8598e483f1842d429e8ae3a820804566f1c73dca1b80e23af9fba0497", size = 394898, upload-time = "2026-02-16T17:16:20.693Z" },
 ]
 
 [[package]]
