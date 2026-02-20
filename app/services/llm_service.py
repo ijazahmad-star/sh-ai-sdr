@@ -45,9 +45,6 @@ import operator
 #     return app
 
 
-
-
-
 def build_workflow(tools, system_prompt, checkpointer, model_name: str):
     model = ChatOpenAI(
         model=model_name,
@@ -101,6 +98,41 @@ def build_workflow(tools, system_prompt, checkpointer, model_name: str):
 
     def agent(state: MessagesState):
         messages = [SystemMessage(content=system_prompt)] + state["messages"]
+        
+        # Safety check: ensure no incomplete tool calls before invoking LLM
+        # If the last message has tool_calls but no following ToolMessages, add placeholder responses
+        if len(messages) >= 2:
+            for i in range(len(messages) - 1):
+                msg = messages[i]
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    # Check if each tool_call has a corresponding ToolMessage
+                    tool_call_ids = {tc["id"] for tc in msg.tool_calls}
+                    # Look ahead for ToolMessages
+                    responded_ids = set()
+                    for j in range(i + 1, len(messages)):
+                        if isinstance(messages[j], ToolMessage):
+                            responded_ids.add(messages[j].tool_call_id)
+                        elif not isinstance(messages[j], ToolMessage):
+                            # Stop checking once we hit a non-ToolMessage
+                            break
+                    
+                    # Add placeholder for missing responses
+                    missing_ids = tool_call_ids - responded_ids
+                    if missing_ids:
+                        print(f"Found {len(missing_ids)} incomplete tool calls - adding placeholders")
+                        placeholder_messages = []
+                        for tc in msg.tool_calls:
+                            if tc["id"] in missing_ids:
+                                placeholder_messages.append(
+                                    ToolMessage(
+                                        content="[Request was cancelled]",
+                                        tool_call_id=tc["id"],
+                                        name=tc.get("name", "unknown")
+                                    )
+                                )
+                        # Insert placeholders right after the message with tool_calls
+                        messages = messages[:i+1] + placeholder_messages + messages[i+1:]
+        
         response = model.invoke(messages)
         return {"messages": [response]}
 
