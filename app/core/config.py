@@ -8,9 +8,14 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_API_KEY")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_API_KEY")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST")
 
 if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
     raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
+
+if not RAPIDAPI_KEY or not RAPIDAPI_HOST:
+    raise ValueError("Missing RAPIDAPI_KEY or RAPIDAPI_HOST")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 SUPABASE_DB_URI = os.getenv("SUPABASE_DB_URI")

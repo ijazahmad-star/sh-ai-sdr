@@ -4,6 +4,7 @@ import time
 from langchain_community.tools import DuckDuckGoSearchRun
 from app.services.vectorstore_service import get_admin_user_id, check_user_has_documents
 from app.services.reranked_service import rerank_with_cross_encoder
+from app.services.linkedin_service import fetch_linkedin_data as linkedin_fetcher_tool
 
 def create_retriever_tool(user_id: str = None, force_user_kb: bool = False):
     """
@@ -77,3 +78,9 @@ def search_google_tool():
     Create Google Search tool
     """   
     return DuckDuckGoSearchRun()
+
+def linkedin_tool():
+    """
+    Return the LinkedIn scraper tool.
+    """
+    return linkedin_fetcher_tool

@@ -10,6 +10,8 @@ class QueryRequest(BaseModel):
     kb_type: Optional[str] = "custom" 
     conversation_id: str
     model: str 
+    lead_source: Optional[str] = None
+    linkedin_url: Optional[str] = None
 
 class PromptRequest(BaseModel):
     name: str
