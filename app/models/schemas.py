@@ -12,6 +12,8 @@ class QueryRequest(BaseModel):
     model: str 
     lead_source: Optional[str] = None
     linkedin_url: Optional[str] = None
+    sdr_message: Optional[str] = None
+    lead_message: Optional[str] = None
 
 class PromptRequest(BaseModel):
     name: str
