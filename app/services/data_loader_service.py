@@ -1,4 +1,4 @@
-from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader
+from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader, Docx2txtLoader, TextLoader
 from pathlib import Path
 
 # def read_uploaded_file(file_path: str) -> str:
@@ -13,13 +13,22 @@ from pathlib import Path
 
 
 def read_uploaded_file(file_path: str) -> str:
-    """Read PDF file and return text content"""
-    print("Inside: read_uploaded_file")
+    """Read PDF, DOCX, or TXT file and return text content"""
+    print(f"Inside: read_uploaded_file with file: {file_path}")
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
     
-    loader = PyPDFLoader(str(path))
+    extension = path.suffix.lower()
+    if extension == ".pdf":
+        loader = PyPDFLoader(str(path))
+    elif extension == ".docx":
+        loader = Docx2txtLoader(str(path))
+    elif extension == ".txt":
+        loader = TextLoader(str(path))
+    else:
+        raise ValueError(f"Unsupported file extension: {extension}")
+    
     docs = loader.load()
     return "\n".join([doc.page_content for doc in docs])
 
