@@ -165,8 +165,8 @@ async def handle_query_stream(request: QueryRequest):
             if request.lead_source == "email" and request.sdr_message and request.lead_message:
                 request.query = (
                     f"Initial conversation with Lead:\n\n"
-                    f"SDR Message: {request.sdr_message}\n\n"
-                    f"Lead Message: {request.lead_message} \n\n"
+                    f"SDR Message: {request.sdr_message}\n"
+                    f"Lead Message: {request.lead_message}\n\n"
                     f"this is our first conversation with the Lead."
                 )
 
@@ -184,7 +184,7 @@ async def handle_query_stream(request: QueryRequest):
             # print(f"Using system prompt: {system_prompt[:100]}...")
             use_user_kb = request.kb_type == "custom"
             tools = create_retriever_tool(user_id=request.user_id, force_user_kb=use_user_kb)
-            # tools.append(search_google_tool())
+            tools.append(search_google_tool())
             tools.append(linkedin_tool())
 
             graph = build_workflow(tools, system_prompt, checkpointer, request.model)
