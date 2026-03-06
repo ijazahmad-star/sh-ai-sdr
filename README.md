@@ -115,7 +115,6 @@ sh-smart-ai-assistant/
 │   ├── models.py               # Database models (legacy, consider migrating to services)
 │   ├── ui.py                   # UI testing utilities
 │   ├── vectorstore.py          # Vectorstore base class (legacy)
-│   ├── vectorstore_weaviate.py # Weaviate vectorstore implementation (legacy)
 │   ├── api/                    # API routes and endpoints
 │   │   ├── __init__.py
 │   │   ├── queries.py          # Query handling endpoint (/query)
