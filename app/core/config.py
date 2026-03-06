@@ -32,9 +32,6 @@ WEB_URLS = [
     "https://strategisthub.com/blogs/",
 ]
 
-WEAVIATE_URL = os.getenv("WEAVIATE_URL")
-WEAVIATE_API_KEY = os.getenv("WEAVIATE_API_KEY")
-
 from langchain_core.messages import HumanMessage, AIMessage
 MEMORY_TABLE = "user_memories"  # make sure this table exists in Supabase
 
