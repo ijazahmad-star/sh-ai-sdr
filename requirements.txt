@@ -40,6 +40,7 @@ google-ai-generativelanguage==0.9.0
 google-api-core==2.28.0
 google-auth==2.41.1
 googleapis-common-protos==1.71.0
+gradio==5.49.1
 gradio-client==1.13.3
 greenlet==3.2.4
 groovy==0.1.2
@@ -74,6 +75,7 @@ langchain-google-genai==3.0.0
 langchain-huggingface==1.0.0
 langchain-openai==1.0.1
 langchain-text-splitters==1.0.0
+langchain-weaviate==0.0.5
 langgraph==1.0.1
 langgraph-checkpoint==3.0.0
 langgraph-checkpoint-postgres==3.0.2
@@ -202,6 +204,7 @@ uuid-utils==0.14.0
 uvicorn==0.38.0
 validators==0.35.0
 wcwidth==0.2.14
+weaviate-client==4.17.0
 websockets==15.0.1
 xxhash==3.6.0
 yarl==1.22.0
